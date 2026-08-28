@@ -14,7 +14,7 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db } from './firebase.js';
 import './styles.css';
 
 const todayKey = () => {
