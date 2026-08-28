@@ -56,6 +56,7 @@ function Admin() {
   const { items } = useParticipants();
   const [name, setName] = useState('');
   const [table, setTable] = useState('');
+  const [beer, setBeer] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function createParticipant(e) {
@@ -66,12 +67,14 @@ function Admin() {
       await addDoc(participantsCol(), {
         name: name.trim().slice(0, 28),
         table: table.trim().slice(0, 12),
+        beer: beer.trim().slice(0, 32),
         cups: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
       setName('');
       setTable('');
+      setBeer('');
     } finally { setBusy(false); }
   }
 
@@ -115,6 +118,7 @@ function Admin() {
         <h2>Novo participante</h2>
         <label>Nome / apelido<input value={name} onChange={e=>setName(e.target.value)} placeholder="Ex.: Hansen" maxLength={28}/></label>
         <label>Mesa<input value={table} onChange={e=>setTable(e.target.value)} placeholder="Ex.: 07" maxLength={12}/></label>
+        <label>Cerveja<input value={beer} onChange={e=>setBeer(e.target.value)} placeholder="Ex.: Hoplager" maxLength={32}/></label>
         <button className="primary" disabled={busy}>{busy ? 'Criando...' : 'Adicionar ao ranking'}</button>
         <button className="danger ghost" type="button" onClick={resetDay}>Zerar copos do dia</button>
       </form>
@@ -125,7 +129,7 @@ function Admin() {
           <div className="position">#{idx+1}</div>
           <div className="person">
             <strong>{p.name}</strong>
-            <span>{p.table ? `Mesa ${p.table}` : 'Sem mesa'}</span>
+            <span>{p.table ? `Mesa ${p.table}` : 'Sem mesa'}{p.beer ? ` • ${p.beer}` : ''}</span>
           </div>
           <div className="cupcount">🍺 <b>{p.cups || 0}</b></div>
           <div className="actions">
@@ -181,7 +185,7 @@ function Ranking() {
         <section className="rest-list">
           {top.slice(3).map((p, idx) => <div className="rank-row" key={p.id}>
             <div className="rank-num">{idx+4}º</div>
-            <div className="rank-name"><b>{p.name}</b><span>{p.table ? `Mesa ${p.table}` : ''}</span></div>
+            <div className="rank-name"><b>{p.name}</b><span>{p.table ? `Mesa ${p.table}` : ''}{p.beer ? ` • ${p.beer}` : ''}</span></div>
             <div className="rank-cups"><span>🍺</span>{p.cups || 0}<small>copos</small></div>
           </div>)}
         </section>
@@ -195,7 +199,7 @@ function PodiumCard({ p, place }) {
     <div className="medal">{place===1?'🥇':place===2?'🥈':'🥉'}</div>
     <div className="podium-place">{place}º LUGAR</div>
     <h2>{p.name}</h2>
-    <p>{p.table ? `Mesa ${p.table}` : ' '}</p>
+    <p>{p.table ? `Mesa ${p.table}` : ' '}{p.beer ? ` • ${p.beer}` : ''}</p>
     <div className="big-cups"><span>🍺</span><b>{p.cups || 0}</b></div>
     <small>COPOS</small>
   </article>
@@ -204,6 +208,7 @@ function PodiumCard({ p, place }) {
 function Join() {
   const [name, setName] = useState('');
   const [table, setTable] = useState('');
+  const [beer, setBeer] = useState('');
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -215,6 +220,7 @@ function Join() {
       await addDoc(participantsCol(), {
         name: name.trim().slice(0,28),
         table: table.trim().slice(0,12),
+        beer: beer.trim().slice(0,32),
         cups: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -231,6 +237,7 @@ function Join() {
       {!done ? <form onSubmit={submit}>
         <label>Seu apelido<input value={name} onChange={e=>setName(e.target.value)} placeholder="Como quer aparecer na TV?" maxLength={28}/></label>
         <label>Sua mesa<input value={table} onChange={e=>setTable(e.target.value)} placeholder="Ex.: 04" maxLength={12}/></label>
+        <label>Sua cerveja<input value={beer} onChange={e=>setBeer(e.target.value)} placeholder="Ex.: Pilsen, Hoplager..." maxLength={32}/></label>
         <button className="primary" disabled={busy}>{busy?'Entrando...':'QUERO PARTICIPAR'}</button>
       </form> : <div className="success"><div>✅</div><h2>Você entrou!</h2><p>Agora seus copos podem ser atualizados pela equipe.</p><a href="/ranking">Ver ranking</a></div>}
     </div>

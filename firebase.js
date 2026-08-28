@@ -2,12 +2,12 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: 'AIzaSyDHsWWs0QWb7vJM1GySAInTw3q4FcIBmLs',
+  authDomain: 'ranking-tv-pub.firebaseapp.com',
+  projectId: 'ranking-tv-pub',
+  storageBucket: 'ranking-tv-pub.firebasestorage.app',
+  messagingSenderId: '619274801134',
+  appId: '1:619274801134:web:c291999add2ee2d3bc8ff'
 };
 
 const app = initializeApp(firebaseConfig);
