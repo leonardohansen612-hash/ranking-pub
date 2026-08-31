@@ -1,13 +1,130 @@
 <!doctype html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#140a1f" />
-    <title>Tex Pub • Ranking do Copo</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="./main.jsx"></script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tex Pub • Ranking do Copo</title>
+<style>
+:root{font-family:Inter,system-ui,Arial;background:#0c0711;color:#fff}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% 0,#3a1553 0,#160b20 42%,#08050b 100%)}
+.wrap{max-width:1500px;margin:auto;padding:28px 42px}
+.head{display:flex;align-items:end;justify-content:space-between;gap:20px}
+.ey{color:#c5a2dc;font-weight:800;letter-spacing:.18em}
+.title{font-size:clamp(34px,5vw,74px);font-weight:1000;margin:4px 0}
+.tabs{display:flex;gap:8px}
+.tabs button{border:1px solid #78518f;background:#21102d;color:white;padding:12px 20px;border-radius:999px;font-weight:900;cursor:pointer}
+.tabs button.on{background:#fff;color:#1a0b24}
+.status{color:#bda8c9;margin:10px 0 24px}
+.podium{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
+.card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:24px;padding:24px;backdrop-filter:blur(8px)}
+.card.first{transform:translateY(-8px);border-color:#d4b3e8}
+.pos{font-size:28px}.name{font-size:clamp(24px,3vw,48px);font-weight:1000}
+.cups{font-size:clamp(34px,5vw,68px);font-weight:1000}
+.sub{color:#c9b8d2}.list{display:grid;gap:10px}
+.row{display:grid;grid-template-columns:70px 1fr auto;align-items:center;padding:16px 22px;background:rgba(255,255,255,.055);border-radius:18px}
+.row .n{font-size:28px;font-weight:900}.row .nm{font-size:24px;font-weight:900}.row .ct{font-size:28px;font-weight:1000}
+.empty{text-align:center;padding:80px 20px;font-size:24px;color:#c9b8d2}
+.warn{font-size:13px;color:#9f8bab;margin-top:10px}
+@media(max-width:800px){.wrap{padding:20px}.head{align-items:start;flex-direction:column}.podium{grid-template-columns:1fr}.card.first{transform:none}.row{grid-template-columns:48px 1fr auto}.row .nm{font-size:18px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="head">
+    <div>
+      <div class="ey">TEX PUB</div>
+      <h1 class="title">RANKING DO COPO 🍺</h1>
+    </div>
+    <div class="tabs">
+      <button id="today" class="on">HOJE</button>
+      <button id="month">MÊS</button>
+    </div>
+  </div>
+  <div class="status" id="status">Conectando ao Saipos…</div>
+  <section class="podium" id="podium"></section>
+  <section class="list" id="list"></section>
+  <div class="warn" id="warn"></div>
+</main>
+<script>
+let period='today';
+let loading=false;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+
+function beerText(x){
+  return Object.entries(x.beers||{})
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,4)
+    .map(([n,q])=>`${q}× ${n}`)
+    .join(' • ') || 'Cervejas Saipos';
+}
+
+async function load(){
+  if(loading) return;
+  loading=true;
+  try{
+    $('#status').textContent=period==='month'
+      ? 'Montando ranking do mês… a primeira carga pode demorar.'
+      : 'Atualizando…';
+
+    const r=await fetch('/api/ranking?period='+period,{cache:'no-store'});
+    const d=await r.json();
+    if(!d.ok) throw Error(d.error);
+    render(d);
+  }catch(e){
+    $('#status').textContent='Erro: '+e.message;
+    $('#podium').innerHTML='';
+    $('#list').innerHTML='<div class="empty">Não foi possível atualizar o ranking.</div>';
+  }finally{
+    loading=false;
+  }
+}
+
+function render(d){
+  const a=d.ranking||[];
+  $('#status').textContent=
+    `Atualizado ${new Date(d.updatedAt).toLocaleTimeString('pt-BR')} • `+
+    `${d.stats.beerCups||0} copos • ${d.stats.sales||0} vendas lidas`;
+
+  const medals=['🥇','🥈','🥉'];
+  $('#podium').innerHTML=a.slice(0,3).map((x,i)=>`
+    <article class="card ${i===0?'first':''}">
+      <div class="pos">${medals[i]}</div>
+      <div class="name">${esc(x.name)}</div>
+      <div class="cups">🍺 ${x.cups}</div>
+      <div class="sub">${esc(beerText(x))}</div>
+    </article>`).join('');
+
+  $('#list').innerHTML=a.length
+    ? a.slice(3,20).map((x,i)=>`
+      <div class="row">
+        <div class="n">${i+4}º</div>
+        <div>
+          <div class="nm">${esc(x.name)}</div>
+          <div class="sub">${esc(beerText(x))}</div>
+        </div>
+        <div class="ct">🍺 ${x.cups}</div>
+      </div>`).join('')
+    : '<div class="empty">Nenhuma cerveja identificada no período.</div>';
+
+  $('#warn').textContent=(d.warnings||[]).length
+    ? `${d.warnings.length} consulta(s) da Saipos falharam e serão tentadas novamente na próxima atualização.`
+    : '';
+}
+
+function setPeriod(p){
+  period=p;
+  $('#today').classList.toggle('on',p==='today');
+  $('#month').classList.toggle('on',p==='month');
+  load();
+}
+
+$('#today').onclick=()=>setPeriod('today');
+$('#month').onclick=()=>setPeriod('month');
+
+load();
+setInterval(()=>{ if(period==='today') load(); },60000);
+</script>
+</body>
 </html>

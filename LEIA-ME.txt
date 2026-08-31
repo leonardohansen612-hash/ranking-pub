@@ -1,0 +1,25 @@
+TEX RANKING SAIPOS V2
+
+Substitua no GitHub:
+- api/_saipos.js
+- api/ranking.js
+- api/test.js
+- index.html
+- vercel.json
+
+Variáveis que já devem existir na Vercel:
+- SAIPOS_API_TOKEN
+- SETUP_KEY
+
+Variáveis opcionais:
+- SAIPOS_START_HOUR=14
+- SAIPOS_END_HOUR=23
+- SAIPOS_CONCURRENCY=3
+- SAIPOS_PAGE_LIMIT=250
+- BEER_KEYWORDS=pilsen,hoplager,witbier,bitterzinha,ybá,yba,ipa zero,american ipa,textreme,english porter,maria manuela
+
+Teste histórico:
+https://SEU-DOMINIO/api/ranking?date=2026-08-29
+
+Teste de diagnóstico:
+https://SEU-DOMINIO/api/test?key=SUA_SETUP_KEY&date=2026-08-29&hour=20

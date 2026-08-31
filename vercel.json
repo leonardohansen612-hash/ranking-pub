@@ -1,8 +1,19 @@
 {
   "rewrites": [
-    { "source": "/ranking", "destination": "/index.html" }
+    {
+      "source": "/ranking",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
-    {"source":"/api/(.*)","headers":[{"key":"Cache-Control","value":"s-maxage=20, stale-while-revalidate=40"}]}
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    }
   ]
 }
