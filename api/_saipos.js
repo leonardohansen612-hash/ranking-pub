@@ -4,7 +4,7 @@ function authHeaders(token, mode='raw') {
   return { Authorization: mode === 'bearer' ? `Bearer ${token}` : token, Accept: 'application/json' };
 }
 
-async function saiposFetch(path, params) {
+export async function saiposFetch(path, params) {
   const token = process.env.SAIPOS_API_TOKEN;
   if (!token) throw new Error('SAIPOS_API_TOKEN não configurado na Vercel.');
   const url = new URL(BASE + path);
