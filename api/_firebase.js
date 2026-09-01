@@ -109,6 +109,28 @@ function rankingSignature(ranking=[]) {
   );
 }
 
+
+// Compatibilidade com api/backfill.js.
+// O backfill continua podendo gravar snapshots históricos diretamente.
+export async function saveDailySnapshot(date, payload) {
+  const meta = periodMeta(date);
+  const ref = db().collection('ranking_daily').doc(date);
+
+  const doc = {
+    date,
+    ...meta,
+    status: 'snapshot',
+    ranking: payload.ranking || [],
+    stats: payload.stats || {},
+    warnings: payload.warnings || [],
+    source: 'saipos',
+    updatedAt: new Date().toISOString()
+  };
+
+  await ref.set(doc, { merge:false });
+  return doc;
+}
+
 export async function saveDailySnapshotMonotonic(date, fresh) {
   const firestore = db();
   const ref = firestore.collection('ranking_daily').doc(date);
