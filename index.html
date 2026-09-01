@@ -102,6 +102,18 @@ body:before{
   grid-template-rows:auto auto 1fr auto;
   min-height:0;
 }
+.year-prize{
+  margin:0 0 10px;
+  padding:9px 14px;
+  border:1px solid rgba(242,191,85,.28);
+  background:linear-gradient(90deg,rgba(242,191,85,.08),rgba(143,60,255,.07));
+  border-radius:12px;
+  color:#f1d28c;
+  text-align:center;
+  font-size:12px;
+  font-weight:950;
+  letter-spacing:.08em;
+}
 .board-head{
   display:grid;grid-template-columns:72px 1fr 120px;
   align-items:center;padding:4px 16px 10px;
@@ -124,12 +136,22 @@ body:before{
   content:"";position:absolute;inset:auto -30px -60px auto;width:130px;height:130px;border-radius:50%;
   background:radial-gradient(circle,rgba(143,60,255,.24),transparent 65%)
 }
-.podium-card.first{border-color:rgba(242,191,85,.5);box-shadow:0 0 28px rgba(242,191,85,.07) inset}
+.podium-card.first{
+  border-color:rgba(242,191,85,.72);
+  box-shadow:0 0 34px rgba(242,191,85,.12) inset,0 0 18px rgba(242,191,85,.08);
+}
+.podium-card.second{
+  border-color:rgba(210,216,226,.48);
+  box-shadow:0 0 28px rgba(210,216,226,.07) inset;
+}
+.podium-card.third{
+  border-color:rgba(205,127,50,.5);
+  box-shadow:0 0 28px rgba(205,127,50,.07) inset;
+}
 .rankline{display:flex;align-items:center;gap:10px}
 .medal{font-size:27px}
 .podium-name{font-size:clamp(19px,1.75vw,31px);font-weight:1000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.podium-cups{font-size:clamp(25px,2.4vw,42px);font-weight:1000;color:var(--purple2);margin-top:6px}
-.podium-beers{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.podium-cups{font-size:clamp(34px,3.15vw,54px);font-weight:1000;color:var(--purple2);margin-top:10px;line-height:1}
 .list{
   display:grid;align-content:start;gap:7px;min-height:0;overflow:hidden
 }
@@ -148,8 +170,7 @@ body:before{
   color:white;font-weight:1000;font-size:15px
 }
 .nm{font-size:clamp(17px,1.6vw,27px);font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.beers{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ct{text-align:right;font-size:clamp(20px,2vw,32px);font-weight:1000;color:var(--purple2)}
+.ct{text-align:right;font-size:clamp(25px,2.35vw,38px);font-weight:1000;color:var(--purple2)}
 .stats{
   margin-top:10px;
   display:grid;grid-template-columns:repeat(4,1fr);
@@ -179,7 +200,7 @@ body:before{
 }
 .mascot-panel img{
   position:relative;z-index:2;
-  width:min(94%,620px);
+  width:min(82%,545px);
   max-height:100%;
   object-fit:contain;object-position:center bottom;
   filter:drop-shadow(0 22px 32px rgba(0,0,0,.58))
@@ -199,8 +220,10 @@ body:before{
 .status-error{color:#ff9c9c}
 .empty{
   display:grid;place-items:center;min-height:250px;
-  color:var(--muted);font-size:20px;font-weight:800
+  color:var(--muted);font-size:20px;font-weight:800;text-align:center
 }
+.empty strong{display:block;color:#eee7f2;font-size:24px;margin-bottom:7px}
+.empty span{display:block;color:var(--muted);font-size:15px;font-weight:700}
 .warning{
   position:fixed;left:50%;bottom:10px;transform:translateX(-50%);
   background:rgba(20,11,27,.92);border:1px solid rgba(143,60,255,.35);
@@ -247,6 +270,7 @@ body:before{
 
   <section class="content">
     <section class="board">
+      <div class="year-prize" id="yearPrize" hidden>🏆 RANKING ANUAL • PREMIAÇÃO PARA O TOP 3</div>
       <div class="board-head">
         <span>#</span><span>CLIENTE</span><span>COPOS 🍺</span>
       </div>
@@ -273,13 +297,6 @@ let controller=null;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 
-function beerText(x){
-  return Object.entries(x.beers||{})
-    .sort((a,b)=>b[1]-a[1])
-    .slice(0,4)
-    .map(([n,q])=>`${q}× ${n}`)
-    .join(' • ') || 'Cervejas Saipos';
-}
 
 function setDateLabel(){
   const parts = new Intl.DateTimeFormat('pt-BR',{
@@ -342,13 +359,12 @@ function render(d){
   const medals=['🥇','🥈','🥉'];
 
   $('#podium').innerHTML=a.slice(0,3).map((x,i)=>`
-    <article class="podium-card ${i===0?'first':''}">
+    <article class="podium-card ${i===0?'first':i===1?'second':'third'}">
       <div class="rankline">
         <div class="medal">${medals[i]}</div>
         <div class="podium-name">${esc(x.name)}</div>
       </div>
       <div class="podium-cups">🍺 ${x.cups}</div>
-      <div class="podium-beers">${esc(beerText(x))}</div>
     </article>
   `).join('');
 
@@ -356,14 +372,11 @@ function render(d){
     ? a.slice(3,10).map((x,i)=>`
       <div class="row">
         <div class="pos">${i+4}</div>
-        <div>
-          <div class="nm">${esc(x.name)}</div>
-          <div class="beers">${esc(beerText(x))}</div>
-        </div>
+        <div class="nm">${esc(x.name)}</div>
         <div class="ct">${x.cups} 🍺</div>
       </div>
     `).join('')
-    : '<div class="empty">Nenhuma cerveja identificada no período.</div>';
+    : '<div class="empty"><div><strong>🍺 O ranking ainda está zerado.</strong><span>Quem abre a rodada?</span></div></div>';
 
   $('#stats').innerHTML=`
     <div class="stat"><strong>${d.stats?.sales ?? 0}</strong><span>VENDAS LIDAS</span></div>
@@ -381,6 +394,7 @@ function render(d){
 
 function setPeriod(p){
   period=p;
+  $('#yearPrize').hidden=p!=='year';
   ['today','month','quarter','semester','year'].forEach(id=>{
     $('#'+id).classList.toggle('on',p===id);
   });
@@ -394,6 +408,7 @@ $('#quarter').onclick=()=>setPeriod('quarter');
 $('#semester').onclick=()=>setPeriod('semester');
 $('#year').onclick=()=>setPeriod('year');
 
+$('#yearPrize').hidden=period!=='year';
 setDateLabel();
 load();
 
