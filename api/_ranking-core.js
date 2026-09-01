@@ -27,56 +27,9 @@ async function mapLimit(values, limit, worker) {
   return out;
 }
 
-
-function previousDate(date) {
-  const [y,m,d] = String(date).split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() - 1);
-  return dt.toISOString().slice(0,10);
-}
-
-function saoPauloHour() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone:'America/Sao_Paulo',
-    hour:'2-digit',
-    hour12:false
-  }).formatToParts(new Date());
-
-  const hour = Number(parts.find(p => p.type === 'hour')?.value || 0);
-  return hour === 24 ? 0 : hour;
-}
-
-function saleUpdatedOnDate(sale, date) {
-  const raw = String(sale?.updated_at ?? sale?.updatedAt ?? sale?.date_updated ?? '');
-  return raw.startsWith(date);
-}
-
-async function fetchHoursForDate(date, hours, concurrency, warnings, label='') {
-  return mapLimit(hours, concurrency, async hour => {
-    let lastError = null;
-
-    for (let attempt=1; attempt<=3; attempt++) {
-      try {
-        const sales = await fetchHour('/search_sales', date, hour);
-        const itemGroups = await fetchHour('/sales_items', date, hour);
-        return {hour,sales,itemGroups};
-      } catch(e) {
-        lastError = e;
-        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 800));
-      }
-    }
-
-    warnings.push(
-      `${label}${date} ${String(hour).padStart(2,'0')}h: ${lastError?.message || 'Falha Saipos'}`
-    );
-    return {hour,sales:[],itemGroups:[]};
-  });
-}
-
 export async function fetchAndAggregateDate(date) {
-  // DIA = dia civil completo em São Paulo (00:00–23:59).
-  // Não usar hourWindow() aqui, pois ele é operacional e pode excluir
-  // vendas criadas antes do horário padrão de abertura.
+  // Cada comanda pertence ao dia em que foi aberta (created_at).
+  // O DIA consulta o dia civil completo: 00:00 até 23:59.
   const start = 0;
   const end = 23;
   const hours=[];
@@ -89,72 +42,34 @@ export async function fetchAndAggregateDate(date) {
 
   const warnings=[];
 
-  const chunks = await fetchHoursForDate(date, hours, concurrency, warnings);
+  const chunks = await mapLimit(hours, concurrency, async hour => {
+    let lastError = null;
+
+    // Retry simples para 429/504 e oscilações temporárias.
+    for (let attempt=1; attempt<=3; attempt++) {
+      try {
+        const sales = await fetchHour('/search_sales', date, hour);
+        const itemGroups = await fetchHour('/sales_items', date, hour);
+        return {hour,sales,itemGroups};
+      } catch(e) {
+        lastError = e;
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, attempt * 800));
+        }
+      }
+    }
+
+    warnings.push(
+      `${date} ${String(hour).padStart(2,'0')}h: ${lastError?.message || 'Falha Saipos'}`
+    );
+    return {hour,sales:[],itemGroups:[]};
+  });
 
   const sales=[];
   const itemGroups=[];
   for(const c of chunks) {
     sales.push(...c.sales);
     itemGroups.push(...c.itemGroups);
-  }
-
-  // Virada da meia-noite: até 06:00, olha também comandas criadas
-  // entre 20:00 e 23:59 do dia anterior e que tiveram updated_at hoje.
-  const carryoverCutoff = Math.max(
-    0,
-    Math.min(12, Number(process.env.SAIPOS_CARRYOVER_CUTOFF_HOUR || 6))
-  );
-  const carryoverStart = Math.max(
-    0,
-    Math.min(23, Number(process.env.SAIPOS_CARRYOVER_START_HOUR || 20))
-  );
-
-  const isRealToday = date === saoPauloToday();
-  const inCarryoverWindow = saoPauloHour() < carryoverCutoff;
-
-  if (isRealToday && inCarryoverWindow) {
-    const prev = previousDate(date);
-    const prevHours=[];
-    for(let h=carryoverStart; h<=23; h++) prevHours.push(h);
-
-    const prevChunks = await fetchHoursForDate(
-      prev, prevHours, concurrency, warnings, 'virada '
-    );
-
-    const carryIds = new Set();
-    const carrySales = [];
-
-    for(const c of prevChunks) {
-      for(const sale of c.sales) {
-        const id = getSaleId(sale);
-        if (!id || saleCanceled(sale)) continue;
-        if (!saleUpdatedOnDate(sale, date)) continue;
-        carryIds.add(id);
-        carrySales.push(sale);
-      }
-    }
-
-    if (carryIds.size) {
-      const seenSales = new Set(sales.map(getSaleId).filter(Boolean));
-      const seenGroups = new Set(itemGroups.map(getSaleId).filter(Boolean));
-
-      for(const sale of carrySales) {
-        const id = getSaleId(sale);
-        if (!seenSales.has(id)) {
-          sales.push(sale);
-          seenSales.add(id);
-        }
-      }
-
-      for(const c of prevChunks) {
-        for(const group of c.itemGroups) {
-          const id = getSaleId(group);
-          if (!id || !carryIds.has(id) || seenGroups.has(id)) continue;
-          itemGroups.push(group);
-          seenGroups.add(id);
-        }
-      }
-    }
   }
 
   return aggregate({date,sales,itemGroups,warnings});
