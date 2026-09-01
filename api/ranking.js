@@ -87,8 +87,21 @@ export default async function handler(req,res) {
     const meta = periodMeta(today);
     let docs=[];
 
+    // Permite testar um mês específico no Firestore sem alterar o comportamento normal.
+    // Ex.: ?period=month&month=2026-09
+    const requestedMonth = typeof req.query.month === 'string' ? req.query.month.trim() : '';
+    const validMonth = /^\d{4}-\d{2}$/.test(requestedMonth);
+
+    if (period === 'month' && requestedMonth && !validMonth) {
+      return res.status(400).json({
+        ok:false,
+        period,
+        error:'Mês inválido. Use YYYY-MM.'
+      });
+    }
+
     if (period === 'month') {
-      docs = await readDailySnapshotsByMonth(meta.month);
+      docs = await readDailySnapshotsByMonth(requestedMonth || meta.month);
     } else if (period === 'semester') {
       docs = await readDailySnapshotsBySemester(meta.semester);
     } else if (period === 'year') {
@@ -107,6 +120,7 @@ export default async function handler(req,res) {
     return res.status(200).json({
       ok:true,
       period,
+      ...(period === 'month' ? { month: requestedMonth || meta.month } : {}),
       updatedAt:new Date().toISOString(),
       ranking:merged.ranking,
       stats:merged.stats,
