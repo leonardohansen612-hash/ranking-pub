@@ -10,11 +10,15 @@ import {
 } from './_firebase.js';
 
 export default async function handler(req,res) {
-  const period = ['today','month','semester','year','alltime'].includes(req.query.period)
+  const period = ['today','month','quarter','semester','year','alltime'].includes(req.query.period)
     ? req.query.period
     : 'today';
 
   const realToday = saoPauloToday();
+  const rankingStartDate = process.env.RANKING_START_DATE || '2026-09-02';
+
+  const onlyOfficialRankingDays = docs =>
+    docs.filter(d => String(d.date || d.id || '') >= rankingStartDate);
 
   // Permite simular outra data somente com a SETUP_KEY.
   // Sem date/key, o comportamento normal continua exatamente igual.
@@ -100,15 +104,37 @@ export default async function handler(req,res) {
       });
     }
 
+    let periodKey = null;
+
     if (period === 'month') {
-      docs = await readDailySnapshotsByMonth(requestedMonth || meta.month);
+      periodKey = requestedMonth || meta.month;
+      docs = await readDailySnapshotsByMonth(periodKey);
+    } else if (period === 'quarter') {
+      const monthNum = Number(String(today).slice(5,7));
+      const quarterNum = Math.floor((monthNum - 1) / 3) + 1;
+      periodKey = `${meta.year}-T${quarterNum}`;
+      const firstMonth = (quarterNum - 1) * 3 + 1;
+      const lastMonth = firstMonth + 2;
+
+      docs = await readDailySnapshotsByYear(meta.year);
+      docs = docs.filter(d => {
+        const m = Number(String(d.date || d.id || '').slice(5,7));
+        return m >= firstMonth && m <= lastMonth;
+      });
     } else if (period === 'semester') {
+      periodKey = meta.semester;
       docs = await readDailySnapshotsBySemester(meta.semester);
     } else if (period === 'year') {
+      periodKey = String(meta.year);
       docs = await readDailySnapshotsByYear(meta.year);
     } else {
+      periodKey = 'alltime';
       docs = await readAllDailySnapshots();
     }
+
+    // A brincadeira oficial começa em 02/09/2026.
+    // Mantém snapshots antigos/testes no Firestore, mas eles não entram em MÊS/TRIMESTRE/SEMESTRE/ANO.
+    docs = onlyOfficialRankingDays(docs);
 
     const merged = mergeSnapshots(docs);
 
@@ -120,7 +146,11 @@ export default async function handler(req,res) {
     return res.status(200).json({
       ok:true,
       period,
-      ...(period === 'month' ? { month: requestedMonth || meta.month } : {}),
+      ...(period === 'month' ? { month: periodKey } : {}),
+      ...(period === 'quarter' ? { quarter: periodKey } : {}),
+      ...(period === 'semester' ? { semester: periodKey } : {}),
+      ...(period === 'year' ? { year: Number(periodKey) } : {}),
+      rankingStartDate,
       updatedAt:new Date().toISOString(),
       ranking:merged.ranking,
       stats:merged.stats,
