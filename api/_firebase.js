@@ -104,14 +104,10 @@ export async function readAllDailySnapshots() {
 }
 
 
-// --- Ranking incremental V1 (coleção de teste isolada) ---
-
+// --- Ranking incremental (coleção de teste isolada) ---
 export async function saveIncrementalSaleTest(sale) {
   const idSale = String(sale?.id_sale || '').trim();
-  if (!idSale) throw new Error('id_sale obrigatório para salvar venda incremental.');
-
-  const ref = db().collection('ranking_incremental_test').doc(idSale);
-
+  if (!idSale) throw new Error('id_sale obrigatório.');
   const doc = {
     id_sale: idSale,
     customer: String(sale?.customer || '').trim() || 'Não identificado',
@@ -122,12 +118,10 @@ export async function saveIncrementalSaleTest(sale) {
     source: 'saipos-incremental-test',
     savedAt: new Date().toISOString()
   };
-
-  await ref.set(doc, { merge: false });
+  await db().collection('ranking_incremental_test').doc(idSale).set(doc, { merge:false });
   return doc;
 }
-
 export async function readIncrementalSalesTest() {
   const snap = await db().collection('ranking_incremental_test').get();
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map(d => ({ id:d.id, ...d.data() }));
 }
