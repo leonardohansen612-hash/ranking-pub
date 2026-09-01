@@ -5,6 +5,7 @@ import {
   readDailySnapshot,
   acquireDailyRefreshLease,
   releaseDailyRefreshLease,
+  recordSaiposAttempt,
   readDailySnapshotsByMonth,
   readDailySnapshotsBySemester,
   readDailySnapshotsByYear,
@@ -23,9 +24,27 @@ function officialDocs(docs) {
 function refreshIntervalMs() {
   const seconds = Math.max(
     60,
-    Number(process.env.RANKING_REFRESH_SECONDS || 300)
+    Number(process.env.RANKING_REFRESH_SECONDS || 60)
   );
   return seconds * 1000;
+}
+
+function snapshotPayload(snapshot, extraStorage={}) {
+  return {
+    ranking:snapshot?.ranking || [],
+    stats:snapshot?.stats || {},
+    warnings:snapshot?.warnings || [],
+    updatedAt:snapshot?.updatedAt || null,
+    lastSaiposAttemptAt:snapshot?.lastSaiposAttemptAt || null,
+    lastSaiposSuccessAt:snapshot?.lastSaiposSuccessAt || null,
+    storage:{
+      source:'firestore-cache',
+      firebaseSaved:true,
+      firebaseError:null,
+      protectedSnapshot:true,
+      ...extraStorage
+    }
+  };
 }
 
 export default async function handler(req,res) {
@@ -62,9 +81,9 @@ export default async function handler(req,res) {
     if (period === 'today') {
       res.setHeader('Cache-Control','no-store');
 
-      // Sem Firebase, mantém fallback direto na Saipos.
       if (!firebaseReady()) {
         const fresh = await fetchAndAggregateDate(today);
+
         return res.status(200).json({
           ok:true,
           period:'today',
@@ -85,31 +104,35 @@ export default async function handler(req,res) {
 
       const previous = await readDailySnapshot(today);
 
-      // A TV pode chamar a cada minuto, mas a Saipos só será varrida
-      // quando o snapshot estiver velho. O restante lê o Firestore.
       const lease = await acquireDailyRefreshLease(today, {
         minIntervalMs: refreshIntervalMs(),
         leaseMs: 120000
       });
 
-      if (!lease.acquired && previous) {
-        return res.status(200).json({
-          ok:true,
-          period:'today',
-          date:today,
-          simulatedDate:canOverrideDate,
-          updatedAt:previous.updatedAt || new Date().toISOString(),
-          ranking:previous.ranking || [],
-          stats:previous.stats || {},
-          warnings:previous.warnings || [],
-          storage:{
-            source:'firestore-cache',
-            firebaseSaved:true,
-            firebaseError:null,
-            protectedSnapshot:true,
+      // Outra chamada atualizou/está atualizando a Saipos.
+      // Respondemos imediatamente com o último snapshot estável.
+      if (!lease.acquired) {
+        const latest = await readDailySnapshot(today) || previous;
+
+        if (latest) {
+          const payload = snapshotPayload(latest, {
             refreshReason:lease.reason
-          }
-        });
+          });
+
+          return res.status(200).json({
+            ok:true,
+            period:'today',
+            date:today,
+            simulatedDate:canOverrideDate,
+            updatedAt:payload.updatedAt,
+            lastSaiposAttemptAt:payload.lastSaiposAttemptAt,
+            lastSaiposSuccessAt:payload.lastSaiposSuccessAt,
+            ranking:payload.ranking,
+            stats:payload.stats,
+            warnings:payload.warnings,
+            storage:payload.storage
+          });
+        }
       }
 
       let fresh = null;
@@ -118,21 +141,22 @@ export default async function handler(req,res) {
 
       try {
         fresh = await fetchAndAggregateDate(today);
-
-        // SEMPRE faz merge monotônico no Firestore.
-        // Não depende de warning para proteger o ranking.
         saved = await saveDailySnapshotMonotonic(today, fresh);
       } catch(e) {
         firebaseError = e.message;
+
+        try {
+          await recordSaiposAttempt(today, { error:e.message });
+        } catch {}
       } finally {
         try {
           await releaseDailyRefreshLease(today);
         } catch {}
       }
 
-      // Se a Saipos falhar totalmente mas já existe snapshot,
-      // a TV continua mostrando o último estado confirmado.
-      if (!saved && previous) saved = previous;
+      if (!saved) {
+        saved = await readDailySnapshot(today);
+      }
 
       if (!saved) {
         throw new Error(firebaseError || 'Não foi possível obter o ranking do dia.');
@@ -143,7 +167,9 @@ export default async function handler(req,res) {
         period:'today',
         date:today,
         simulatedDate:canOverrideDate,
-        updatedAt:saved.updatedAt || new Date().toISOString(),
+        updatedAt:saved.updatedAt || null,
+        lastSaiposAttemptAt:saved.lastSaiposAttemptAt || null,
+        lastSaiposSuccessAt:saved.lastSaiposSuccessAt || null,
         ranking:saved.ranking || [],
         stats:saved.stats || {},
         warnings:fresh?.warnings || saved.warnings || [],
@@ -152,13 +178,14 @@ export default async function handler(req,res) {
           firebaseSaved:Boolean(fresh && !firebaseError),
           firebaseError,
           protectedSnapshot:true,
+          rankingChanged:Boolean(saved.changed),
           refreshReason:lease.reason
         }
       });
     }
 
     if (!firebaseReady()) {
-      throw new Error('Firebase Admin não configurado na Vercel.');
+      throw new Error('Firebase Admin não configurado.');
     }
 
     const meta = periodMeta(today);

@@ -49,29 +49,34 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function monotonicPayload(date, previous, fresh) {
-  const meta = periodMeta(date);
+function normalizeRanking(ranking=[]) {
+  return [...ranking]
+    .filter(p => p?.key)
+    .map(p => ({
+      key: p.key,
+      name: p.name,
+      cups: num(p.cups),
+      beers: { ...(p.beers || {}) }
+    }))
+    .sort((a,b) => b.cups - a.cups || a.name.localeCompare(b.name,'pt-BR'));
+}
+
+function mergeMonotonic(previous, fresh) {
   const rank = new Map();
 
-  for (const person of (previous?.ranking || [])) {
-    if (!person?.key) continue;
+  for (const person of normalizeRanking(previous?.ranking || [])) {
     rank.set(person.key, {
-      key: person.key,
-      name: person.name,
-      cups: num(person.cups),
+      ...person,
       beers: { ...(person.beers || {}) }
     });
   }
 
-  for (const person of (fresh?.ranking || [])) {
-    if (!person?.key) continue;
-
+  for (const person of normalizeRanking(fresh?.ranking || [])) {
     const old = rank.get(person.key);
+
     if (!old) {
       rank.set(person.key, {
-        key: person.key,
-        name: person.name,
-        cups: num(person.cups),
+        ...person,
         beers: { ...(person.beers || {}) }
       });
       continue;
@@ -87,58 +92,73 @@ function monotonicPayload(date, previous, fresh) {
     rank.set(person.key, old);
   }
 
-  return {
-    date,
-    ...meta,
-    status: 'snapshot',
-    ranking: [...rank.values()]
-      .sort((a,b) => b.cups - a.cups || a.name.localeCompare(b.name,'pt-BR')),
-    stats: {
-      sales: Math.max(num(previous?.stats?.sales), num(fresh?.stats?.sales)),
-      saleGroups: Math.max(num(previous?.stats?.saleGroups), num(fresh?.stats?.saleGroups)),
-      matchedItems: Math.max(num(previous?.stats?.matchedItems), num(fresh?.stats?.matchedItems)),
-      beerCups: Math.max(num(previous?.stats?.beerCups), num(fresh?.stats?.beerCups)),
-      days: 1
-    },
-    warnings: fresh?.warnings || [],
-    source: 'saipos-monotonic',
-    updatedAt: new Date().toISOString()
-  };
+  return [...rank.values()]
+    .sort((a,b) => b.cups - a.cups || a.name.localeCompare(b.name,'pt-BR'));
 }
 
-export async function saveDailySnapshot(date, payload) {
-  const meta = periodMeta(date);
-  const ref = db().collection('ranking_daily').doc(date);
-
-  const doc = {
-    date,
-    ...meta,
-    status: 'snapshot',
-    ranking: payload.ranking || [],
-    stats: payload.stats || {},
-    warnings: payload.warnings || [],
-    source: 'saipos',
-    updatedAt: new Date().toISOString()
-  };
-
-  await ref.set(doc, { merge: false });
-  return doc;
+function rankingSignature(ranking=[]) {
+  return JSON.stringify(
+    normalizeRanking(ranking).map(p => ({
+      key: p.key,
+      name: p.name,
+      cups: p.cups,
+      beers: Object.fromEntries(
+        Object.entries(p.beers || {}).sort(([a],[b]) => a.localeCompare(b,'pt-BR'))
+      )
+    }))
+  );
 }
 
-// Grava o DIA de forma monotônica e transacional.
-// Mesmo que duas atualizações terminem fora de ordem, uma leitura menor
-// nunca consegue apagar copos/clientes já confirmados no mesmo dia.
 export async function saveDailySnapshotMonotonic(date, fresh) {
   const firestore = db();
   const ref = firestore.collection('ranking_daily').doc(date);
+  const nowIso = new Date().toISOString();
 
   return firestore.runTransaction(async tx => {
     const snap = await tx.get(ref);
     const previous = snap.exists ? snap.data() : null;
-    const doc = monotonicPayload(date, previous, fresh);
-    tx.set(ref, doc, { merge: false });
-    return doc;
+    const ranking = mergeMonotonic(previous, fresh);
+
+    const changed = rankingSignature(previous?.ranking || []) !== rankingSignature(ranking);
+
+    const meta = periodMeta(date);
+    const doc = {
+      date,
+      ...meta,
+      status: 'snapshot',
+      ranking,
+      stats: {
+        sales: Math.max(num(previous?.stats?.sales), num(fresh?.stats?.sales)),
+        saleGroups: Math.max(num(previous?.stats?.saleGroups), num(fresh?.stats?.saleGroups)),
+        matchedItems: Math.max(num(previous?.stats?.matchedItems), num(fresh?.stats?.matchedItems)),
+        beerCups: Math.max(num(previous?.stats?.beerCups), num(fresh?.stats?.beerCups)),
+        days: 1
+      },
+      warnings: fresh?.warnings || [],
+      source: 'saipos-monotonic',
+      // updatedAt representa mudança REAL no ranking.
+      updatedAt: changed
+        ? nowIso
+        : (previous?.updatedAt || nowIso),
+      lastSaiposAttemptAt: nowIso,
+      lastSaiposSuccessAt: nowIso
+    };
+
+    tx.set(ref, doc, { merge:false });
+
+    return {
+      ...doc,
+      changed
+    };
   });
+}
+
+export async function recordSaiposAttempt(date, { error=null } = {}) {
+  const ref = db().collection('ranking_daily').doc(date);
+  await ref.set({
+    lastSaiposAttemptAt: new Date().toISOString(),
+    ...(error ? { lastSaiposError: error } : {})
+  }, { merge:true });
 }
 
 export async function readDailySnapshot(date) {
@@ -147,42 +167,53 @@ export async function readDailySnapshot(date) {
   return { id:snap.id, ...snap.data() };
 }
 
-// Evita que TV, navegador, GitHub Actions e testes disparem várias
-// varreduras Saipos ao mesmo tempo.
+// Controle separado do ranking:
+// - minIntervalMs limita a frequência de consulta à Saipos
+// - leaseMs impede duas consultas simultâneas
 export async function acquireDailyRefreshLease(
   date,
-  { minIntervalMs = 300000, leaseMs = 120000 } = {}
+  { minIntervalMs = 60000, leaseMs = 120000 } = {}
 ) {
   const firestore = db();
-  const dailyRef = firestore.collection('ranking_daily').doc(date);
   const leaseRef = firestore.collection('ranking_refresh').doc(date);
   const now = Date.now();
 
   return firestore.runTransaction(async tx => {
-    const [dailySnap, leaseSnap] = await Promise.all([
-      tx.get(dailyRef),
-      tx.get(leaseRef)
-    ]);
+    const snap = await tx.get(leaseRef);
+    const data = snap.exists ? snap.data() : {};
 
-    if (dailySnap.exists) {
-      const updatedAt = Date.parse(dailySnap.data()?.updatedAt || '');
-      if (Number.isFinite(updatedAt) && (now - updatedAt) < minIntervalMs) {
-        return { acquired:false, reason:'fresh' };
-      }
+    const lastAttemptAt = Date.parse(data?.lastAttemptAt || '');
+    if (Number.isFinite(lastAttemptAt) && (now - lastAttemptAt) < minIntervalMs) {
+      return {
+        acquired:false,
+        reason:'fresh-attempt',
+        lastAttemptAt:data.lastAttemptAt
+      };
     }
 
-    const leaseUntil = Number(leaseSnap.exists ? leaseSnap.data()?.leaseUntil || 0 : 0);
+    const leaseUntil = Number(data?.leaseUntil || 0);
     if (leaseUntil > now) {
-      return { acquired:false, reason:'busy', leaseUntil };
+      return {
+        acquired:false,
+        reason:'busy',
+        leaseUntil
+      };
     }
+
+    const nowIso = new Date(now).toISOString();
 
     tx.set(leaseRef, {
       date,
       leaseUntil: now + leaseMs,
-      startedAt: new Date(now).toISOString()
+      lastAttemptAt: nowIso,
+      startedAt: nowIso
     }, { merge:true });
 
-    return { acquired:true, reason:'stale' };
+    return {
+      acquired:true,
+      reason:'due',
+      lastAttemptAt:nowIso
+    };
   });
 }
 

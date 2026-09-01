@@ -45,10 +45,8 @@ function saoPauloParts() {
 
 export async function fetchAndAggregateDate(date) {
   // Regra oficial: a comanda pertence ao dia em que foi aberta (created_at).
-  //
-  // IMPORTANTE:
-  // Voltamos à janela operacional e, no dia atual, nunca consultamos
-  // horas futuras. Isso reduz fortemente 429/504 da Saipos.
+  // Usa a janela operacional configurada em _saipos.js.
+  // No dia atual, nunca consulta horas futuras.
   const configured = hourWindow();
   const now = saoPauloParts();
   const realToday = `${now.year}-${now.month}-${now.day}`;
@@ -74,7 +72,6 @@ export async function fetchAndAggregateDate(date) {
     });
   }
 
-  // Uma chamada por vez por padrão para não estourar o rate limit.
   const concurrency = Math.max(
     1,
     Math.min(2, Number(process.env.SAIPOS_CONCURRENCY || 1))
@@ -85,16 +82,14 @@ export async function fetchAndAggregateDate(date) {
   const chunks = await mapLimit(hours, concurrency, async hour => {
     let lastError = null;
 
-    // Duas tentativas são suficientes para oscilações temporárias,
-    // sem multiplicar demais as chamadas em caso de 429/504.
     for (let attempt=1; attempt<=2; attempt++) {
       try {
         const sales = await fetchHour('/search_sales', date, hour);
 
-        // Pequeno respiro entre os dois endpoints da mesma hora.
         await sleep(250);
 
         const itemGroups = await fetchHour('/sales_items', date, hour);
+
         return {hour,sales,itemGroups};
       } catch(e) {
         lastError = e;
