@@ -1,11 +1,37 @@
-import { getFirestore } from './_firebase.js';
+import admin from 'firebase-admin';
+
+function getDb() {
+  if (!admin.apps.length) {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+
+    if (!projectId || !clientEmail || !privateKey) {
+      throw new Error('Firebase Admin não configurado no ambiente.');
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId,
+        clientEmail,
+        privateKey
+      })
+    });
+  }
+
+  return admin.firestore();
+}
 
 function safeHeaders(headers = {}) {
   const out = {};
   const blocked = ['authorization', 'cookie', 'set-cookie', 'x-api-key'];
-  for (const [k, v] of Object.entries(headers)) {
-    if (!blocked.includes(String(k).toLowerCase())) out[k] = v;
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (!blocked.includes(String(key).toLowerCase())) {
+      out[key] = value;
+    }
   }
+
   return out;
 }
 
@@ -22,15 +48,17 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return res.status(405).json({
+      ok: false,
+      error: 'Method not allowed'
+    });
   }
 
   try {
-    const db = getFirestore();
-    const now = new Date();
+    const db = getDb();
 
     const doc = {
-      receivedAt: now.toISOString(),
+      receivedAt: new Date().toISOString(),
       method: req.method,
       headers: safeHeaders(req.headers),
       query: req.query || {},
@@ -46,8 +74,12 @@ export default async function handler(req, res) {
       received: true,
       eventId: ref.id
     });
-  } catch (e) {
-    console.error('[SAIPOS WEBHOOK ERROR]', e);
-    return res.status(500).json({ ok: false, error: e.message });
+  } catch (error) {
+    console.error('[SAIPOS WEBHOOK ERROR]', error);
+
+    return res.status(500).json({
+      ok: false,
+      error: error.message
+    });
   }
 }
