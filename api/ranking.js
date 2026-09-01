@@ -2,6 +2,7 @@ import { fetchAndAggregateDate, mergeSnapshots, saoPauloToday } from './_ranking
 import {
   firebaseReady,
   saveDailySnapshot,
+  readDailySnapshot,
   readDailySnapshotsByMonth,
   readDailySnapshotsBySemester,
   readDailySnapshotsByYear,
@@ -9,19 +10,83 @@ import {
   periodMeta
 } from './_firebase.js';
 
+const RANKING_START_DATE = process.env.RANKING_START_DATE || '2026-09-02';
+
+function number(v) {
+  return Number(v || 0);
+}
+
+function mergeSameDayBest(previous, fresh) {
+  if (!previous) return fresh;
+
+  const rank = new Map();
+
+  for (const person of (previous.ranking || [])) {
+    if (!person?.key) continue;
+    rank.set(person.key, {
+      key: person.key,
+      name: person.name,
+      cups: number(person.cups),
+      beers: { ...(person.beers || {}) }
+    });
+  }
+
+  for (const person of (fresh.ranking || [])) {
+    if (!person?.key) continue;
+
+    const old = rank.get(person.key);
+
+    if (!old) {
+      rank.set(person.key, {
+        key: person.key,
+        name: person.name,
+        cups: number(person.cups),
+        beers: { ...(person.beers || {}) }
+      });
+      continue;
+    }
+
+    // Em uma leitura parcial da Saipos nunca reduzimos o que já foi
+    // confirmado anteriormente no mesmo dia.
+    old.name = person.name || old.name;
+    old.cups = Math.max(number(old.cups), number(person.cups));
+
+    for (const [beer, qty] of Object.entries(person.beers || {})) {
+      old.beers[beer] = Math.max(number(old.beers[beer]), number(qty));
+    }
+
+    rank.set(person.key, old);
+  }
+
+  return {
+    date: fresh.date || previous.date,
+    ranking: [...rank.values()]
+      .sort((a,b) => b.cups - a.cups || a.name.localeCompare(b.name,'pt-BR')),
+    stats: {
+      sales: Math.max(number(previous.stats?.sales), number(fresh.stats?.sales)),
+      saleGroups: Math.max(number(previous.stats?.saleGroups), number(fresh.stats?.saleGroups)),
+      matchedItems: Math.max(number(previous.stats?.matchedItems), number(fresh.stats?.matchedItems)),
+      beerCups: Math.max(number(previous.stats?.beerCups), number(fresh.stats?.beerCups)),
+      days: 1
+    },
+    warnings: fresh.warnings || []
+  };
+}
+
+function officialDocs(docs) {
+  return (docs || []).filter(doc =>
+    typeof doc?.date === 'string' && doc.date >= RANKING_START_DATE
+  );
+}
+
 export default async function handler(req,res) {
   const period = ['today','month','quarter','semester','year','alltime'].includes(req.query.period)
     ? req.query.period
     : 'today';
 
   const realToday = saoPauloToday();
-  const rankingStartDate = process.env.RANKING_START_DATE || '2026-09-02';
-
-  const onlyOfficialRankingDays = docs =>
-    docs.filter(d => String(d.date || d.id || '') >= rankingStartDate);
 
   // Permite simular outra data somente com a SETUP_KEY.
-  // Sem date/key, o comportamento normal continua exatamente igual.
   const requestedDate = typeof req.query.date === 'string' ? req.query.date.trim() : '';
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate);
   const setupKey = process.env.SETUP_KEY || '';
@@ -47,12 +112,28 @@ export default async function handler(req,res) {
 
   try {
     if (period === 'today') {
-      const data = await fetchAndAggregateDate(today);
+      const fresh = await fetchAndAggregateDate(today);
+
+      let data = fresh;
       let firebaseSaved = false;
       let firebaseError = null;
+      let protectedSnapshot = false;
+      let source = 'saipos';
 
       if (firebaseReady()) {
         try {
+          const previous = await readDailySnapshot(today);
+          const hasSaiposWarnings = Array.isArray(fresh.warnings) && fresh.warnings.length > 0;
+
+          if (hasSaiposWarnings && previous) {
+            // A Saipos respondeu parcialmente. Junta a leitura nova ao melhor
+            // snapshot já confirmado do mesmo dia, sem deixar um 504 apagar
+            // clientes/copos que já estavam salvos.
+            data = mergeSameDayBest(previous, fresh);
+            protectedSnapshot = true;
+            source = 'saipos+firestore-protection';
+          }
+
           await saveDailySnapshot(today, data);
           firebaseSaved = true;
         } catch(e) {
@@ -62,10 +143,7 @@ export default async function handler(req,res) {
         firebaseError = 'Firebase Admin não configurado';
       }
 
-      res.setHeader(
-        'Cache-Control',
-        's-maxage=20, stale-while-revalidate=60'
-      );
+      res.setHeader('Cache-Control','no-store');
 
       return res.status(200).json({
         ok:true,
@@ -75,11 +153,12 @@ export default async function handler(req,res) {
         updatedAt:new Date().toISOString(),
         ranking:data.ranking,
         stats:data.stats,
-        warnings:data.warnings,
+        warnings:fresh.warnings || [],
         storage:{
-          source:'saipos',
+          source,
           firebaseSaved,
-          firebaseError
+          firebaseError,
+          protectedSnapshot
         }
       });
     }
@@ -91,8 +170,7 @@ export default async function handler(req,res) {
     const meta = periodMeta(today);
     let docs=[];
 
-    // Permite testar um mês específico no Firestore sem alterar o comportamento normal.
-    // Ex.: ?period=month&month=2026-09
+    // Permite testar um mês específico no Firestore.
     const requestedMonth = typeof req.query.month === 'string' ? req.query.month.trim() : '';
     const validMonth = /^\d{4}-\d{2}$/.test(requestedMonth);
 
@@ -104,37 +182,29 @@ export default async function handler(req,res) {
       });
     }
 
-    let periodKey = null;
-
     if (period === 'month') {
-      periodKey = requestedMonth || meta.month;
-      docs = await readDailySnapshotsByMonth(periodKey);
+      docs = await readDailySnapshotsByMonth(requestedMonth || meta.month);
     } else if (period === 'quarter') {
+      const yearDocs = await readDailySnapshotsByYear(meta.year);
       const monthNum = Number(String(today).slice(5,7));
-      const quarterNum = Math.floor((monthNum - 1) / 3) + 1;
-      periodKey = `${meta.year}-T${quarterNum}`;
-      const firstMonth = (quarterNum - 1) * 3 + 1;
+      const quarter = Math.floor((monthNum - 1) / 3) + 1;
+      const firstMonth = (quarter - 1) * 3 + 1;
       const lastMonth = firstMonth + 2;
 
-      docs = await readDailySnapshotsByYear(meta.year);
-      docs = docs.filter(d => {
-        const m = Number(String(d.date || d.id || '').slice(5,7));
+      docs = yearDocs.filter(doc => {
+        const m = Number(String(doc?.date || '').slice(5,7));
         return m >= firstMonth && m <= lastMonth;
       });
     } else if (period === 'semester') {
-      periodKey = meta.semester;
       docs = await readDailySnapshotsBySemester(meta.semester);
     } else if (period === 'year') {
-      periodKey = String(meta.year);
       docs = await readDailySnapshotsByYear(meta.year);
     } else {
-      periodKey = 'alltime';
       docs = await readAllDailySnapshots();
     }
 
-    // A brincadeira oficial começa em 02/09/2026.
-    // Mantém snapshots antigos/testes no Firestore, mas eles não entram em MÊS/TRIMESTRE/SEMESTRE/ANO.
-    docs = onlyOfficialRankingDays(docs);
+    // A competição oficial começa em 02/09/2026.
+    docs = officialDocs(docs);
 
     const merged = mergeSnapshots(docs);
 
@@ -146,11 +216,11 @@ export default async function handler(req,res) {
     return res.status(200).json({
       ok:true,
       period,
-      ...(period === 'month' ? { month: periodKey } : {}),
-      ...(period === 'quarter' ? { quarter: periodKey } : {}),
-      ...(period === 'semester' ? { semester: periodKey } : {}),
-      ...(period === 'year' ? { year: Number(periodKey) } : {}),
-      rankingStartDate,
+      ...(period === 'month' ? { month: requestedMonth || meta.month } : {}),
+      ...(period === 'quarter' ? {
+        quarter: Math.floor((Number(String(today).slice(5,7)) - 1) / 3) + 1
+      } : {}),
+      rankingStartDate:RANKING_START_DATE,
       updatedAt:new Date().toISOString(),
       ranking:merged.ranking,
       stats:merged.stats,

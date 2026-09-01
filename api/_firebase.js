@@ -63,6 +63,13 @@ export async function saveDailySnapshot(date, payload) {
   return doc;
 }
 
+
+export async function readDailySnapshot(date) {
+  const snap = await db().collection('ranking_daily').doc(date).get();
+  if (!snap.exists) return null;
+  return { id:snap.id, ...snap.data() };
+}
+
 export async function readDailySnapshotsByMonth(month) {
   const snap = await db()
     .collection('ranking_daily')
@@ -101,27 +108,4 @@ export async function readAllDailySnapshots() {
   return snap.docs
     .map(d => ({ id:d.id, ...d.data() }))
     .filter(d => Array.isArray(d.ranking));
-}
-
-
-// --- Ranking incremental (coleção de teste isolada) ---
-export async function saveIncrementalSaleTest(sale) {
-  const idSale = String(sale?.id_sale || '').trim();
-  if (!idSale) throw new Error('id_sale obrigatório.');
-  const doc = {
-    id_sale: idSale,
-    customer: String(sale?.customer || '').trim() || 'Não identificado',
-    created_at: sale?.created_at || null,
-    updated_at: sale?.updated_at || null,
-    cups: Number(sale?.cups || 0),
-    beers: Array.isArray(sale?.beers) ? sale.beers : [],
-    source: 'saipos-incremental-test',
-    savedAt: new Date().toISOString()
-  };
-  await db().collection('ranking_incremental_test').doc(idSale).set(doc, { merge:false });
-  return doc;
-}
-export async function readIncrementalSalesTest() {
-  const snap = await db().collection('ranking_incremental_test').get();
-  return snap.docs.map(d => ({ id:d.id, ...d.data() }));
 }
