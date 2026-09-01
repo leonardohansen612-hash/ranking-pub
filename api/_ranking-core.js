@@ -43,27 +43,76 @@ function saoPauloParts() {
   return Object.fromEntries(parts.map(p => [p.type,p.value]));
 }
 
+function addDays(dateStr, amount) {
+  const [y,m,d] = String(dateStr).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + amount));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
+}
+
+/**
+ * Monta as faixas horárias consultadas na Saipos.
+ *
+ * Regra:
+ * - mantém a janela local que já funcionava;
+ * - para o dia atual, adiciona até 3 horas de "lookahead";
+ * - se o lookahead passar de 23h, consulta 00h/01h/02h do dia seguinte.
+ *
+ * Motivo:
+ * A API recebe created_at como data/hora sem timezone explícito. Se os dados
+ * estiverem sendo indexados em UTC, uma comanda criada às 16h em São Paulo
+ * pode cair na faixa 19h da API. Sem o lookahead ela só seria encontrada
+ * horas depois.
+ *
+ * Essa abordagem cobre tanto o comportamento local quanto UTC sem voltar
+ * a consultar 24 horas por atualização.
+ */
+function buildSlots(date, configured, realToday, nowHour) {
+  if (date > realToday) return [];
+
+  const slots = [];
+
+  if (date < realToday) {
+    for (let h=configured.start; h<=configured.end; h++) {
+      slots.push({date, hour:h});
+    }
+    return slots;
+  }
+
+  // Dia atual: janela normal até a hora local atual.
+  const localEnd = Math.min(configured.end, nowHour);
+  for (let h=configured.start; h<=localEnd; h++) {
+    slots.push({date, hour:h});
+  }
+
+  // Folga de até 3h para cobrir possível created_at em UTC.
+  const lookaheadHours = 3;
+  for (let offset=1; offset<=lookaheadHours; offset++) {
+    const rawHour = nowHour + offset;
+
+    if (rawHour <= 23) {
+      // Só adiciona se ainda não estiver na janela local normal.
+      if (rawHour > localEnd) {
+        slots.push({date, hour:rawHour});
+      }
+    } else {
+      const nextDate = addDays(date, 1);
+      slots.push({date:nextDate, hour:rawHour - 24});
+    }
+  }
+
+  return slots;
+}
+
 export async function fetchAndAggregateDate(date) {
   // Regra oficial: a comanda pertence ao dia em que foi aberta (created_at).
-  // Usa a janela operacional configurada em _saipos.js.
-  // No dia atual, nunca consulta horas futuras.
   const configured = hourWindow();
   const now = saoPauloParts();
   const realToday = `${now.year}-${now.month}-${now.day}`;
+  const nowHour = Number(now.hour);
 
-  const start = configured.start;
-  let end = configured.end;
+  const slots = buildSlots(date, configured, realToday, nowHour);
 
-  if (date === realToday) {
-    end = Math.min(end, Number(now.hour));
-  } else if (date > realToday) {
-    end = start - 1;
-  }
-
-  const hours = [];
-  for (let h=start; h<=end; h++) hours.push(h);
-
-  if (!hours.length) {
+  if (!slots.length) {
     return aggregate({
       date,
       sales:[],
@@ -79,18 +128,18 @@ export async function fetchAndAggregateDate(date) {
 
   const warnings=[];
 
-  const chunks = await mapLimit(hours, concurrency, async hour => {
+  const chunks = await mapLimit(slots, concurrency, async slot => {
     let lastError = null;
 
     for (let attempt=1; attempt<=2; attempt++) {
       try {
-        const sales = await fetchHour('/search_sales', date, hour);
+        const sales = await fetchHour('/search_sales', slot.date, slot.hour);
 
         await sleep(250);
 
-        const itemGroups = await fetchHour('/sales_items', date, hour);
+        const itemGroups = await fetchHour('/sales_items', slot.date, slot.hour);
 
-        return {hour,sales,itemGroups};
+        return {slot,sales,itemGroups};
       } catch(e) {
         lastError = e;
         if (attempt < 2) await sleep(1200);
@@ -98,10 +147,10 @@ export async function fetchAndAggregateDate(date) {
     }
 
     warnings.push(
-      `${date} ${String(hour).padStart(2,'0')}h: ${lastError?.message || 'Falha Saipos'}`
+      `${slot.date} ${String(slot.hour).padStart(2,'0')}h: ${lastError?.message || 'Falha Saipos'}`
     );
 
-    return {hour,sales:[],itemGroups:[]};
+    return {slot,sales:[],itemGroups:[]};
   });
 
   const sales=[];
