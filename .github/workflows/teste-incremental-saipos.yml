@@ -44,7 +44,26 @@ jobs:
           )
 
           with urllib.request.urlopen(req, timeout=90) as r:
-              sales = json.load(r)
+              payload = json.load(r)
+
+          if isinstance(payload, list):
+              sales = payload
+          elif isinstance(payload, dict):
+              sales = (
+                  payload.get("data")
+                  or payload.get("items")
+                  or payload.get("results")
+                  or payload.get("records")
+                  or payload.get("result")
+                  or []
+              )
+          else:
+              sales = []
+
+          if isinstance(sales, dict):
+              sales = [sales]
+          if not isinstance(sales, list):
+              sales = []
 
           print("JANELA:", fmt(start), "até", fmt(end))
           print("VENDAS ALTERADAS:", len(sales))
@@ -81,9 +100,26 @@ jobs:
                   },
               )
               with urllib.request.urlopen(ireq, timeout=90) as r:
-                  data = json.load(r)
-                  if isinstance(data, list):
-                      groups.extend(data)
+                  payload_items = json.load(r)
+
+              if isinstance(payload_items, list):
+                  data = payload_items
+              elif isinstance(payload_items, dict):
+                  data = (
+                      payload_items.get("data")
+                      or payload_items.get("items")
+                      or payload_items.get("results")
+                      or payload_items.get("records")
+                      or payload_items.get("result")
+                      or []
+                  )
+              else:
+                  data = []
+
+              if isinstance(data, dict):
+                  data = [data]
+              if isinstance(data, list):
+                  groups.extend(data)
 
           by_sale = {}
           for g in groups:
