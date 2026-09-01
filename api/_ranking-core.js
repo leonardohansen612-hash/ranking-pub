@@ -6,8 +6,7 @@ import {
   getItemName,
   getQty,
   customerFor,
-  isBeer,
-  hourWindow
+  isBeer
 } from './_saipos.js';
 
 async function mapLimit(values, limit, worker) {
@@ -48,12 +47,7 @@ function saoPauloHour() {
 }
 
 function saleUpdatedOnDate(sale, date) {
-  const raw = String(
-    sale?.updated_at ??
-    sale?.updatedAt ??
-    sale?.date_updated ??
-    ''
-  );
+  const raw = String(sale?.updated_at ?? sale?.updatedAt ?? sale?.date_updated ?? '');
   return raw.startsWith(date);
 }
 
@@ -68,9 +62,7 @@ async function fetchHoursForDate(date, hours, concurrency, warnings, label='') {
         return {hour,sales,itemGroups};
       } catch(e) {
         lastError = e;
-        if (attempt < 3) {
-          await new Promise(r => setTimeout(r, attempt * 800));
-        }
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 800));
       }
     }
 
@@ -82,7 +74,11 @@ async function fetchHoursForDate(date, hours, concurrency, warnings, label='') {
 }
 
 export async function fetchAndAggregateDate(date) {
-  const {start,end} = hourWindow();
+  // DIA = dia civil completo em São Paulo (00:00–23:59).
+  // Não usar hourWindow() aqui, pois ele é operacional e pode excluir
+  // vendas criadas antes do horário padrão de abertura.
+  const start = 0;
+  const end = 23;
   const hours=[];
   for(let h=start; h<=end; h++) hours.push(h);
 
@@ -93,42 +89,21 @@ export async function fetchAndAggregateDate(date) {
 
   const warnings=[];
 
-  // Fluxo normal: vendas criadas na data consultada.
-  const chunks = await fetchHoursForDate(
-    date,
-    hours,
-    concurrency,
-    warnings
-  );
+  const chunks = await fetchHoursForDate(date, hours, concurrency, warnings);
 
   const sales=[];
   const itemGroups=[];
-
   for(const c of chunks) {
     sales.push(...c.sales);
     itemGroups.push(...c.itemGroups);
   }
 
-  /*
-   * VIRADA DA MEIA-NOITE
-   *
-   * Até o horário de corte, também olhamos algumas horas do dia anterior.
-   * Porém só carregamos vendas cujo updated_at já pertence ao dia atual.
-   *
-   * Isso resolve a situação de uma comanda aberta antes da meia-noite que
-   * continua recebendo lançamentos depois da meia-noite, sem depender de
-   * pesquisar a Saipos diretamente por updated_at (consulta que se mostrou
-   * muito instável).
-   *
-   * Depois do corte, o DIA volta a considerar somente vendas criadas hoje.
-   * Assim a comanda da noite anterior não permanece no ranking durante o
-   * restante do novo dia.
-   */
+  // Virada da meia-noite: até 06:00, olha também comandas criadas
+  // entre 20:00 e 23:59 do dia anterior e que tiveram updated_at hoje.
   const carryoverCutoff = Math.max(
     0,
     Math.min(12, Number(process.env.SAIPOS_CARRYOVER_CUTOFF_HOUR || 6))
   );
-
   const carryoverStart = Math.max(
     0,
     Math.min(23, Number(process.env.SAIPOS_CARRYOVER_START_HOUR || 20))
@@ -143,24 +118,19 @@ export async function fetchAndAggregateDate(date) {
     for(let h=carryoverStart; h<=23; h++) prevHours.push(h);
 
     const prevChunks = await fetchHoursForDate(
-      prev,
-      prevHours,
-      concurrency,
-      warnings,
-      'virada '
+      prev, prevHours, concurrency, warnings, 'virada '
     );
 
-    const carrySales = [];
     const carryIds = new Set();
+    const carrySales = [];
 
     for(const c of prevChunks) {
       for(const sale of c.sales) {
         const id = getSaleId(sale);
         if (!id || saleCanceled(sale)) continue;
         if (!saleUpdatedOnDate(sale, date)) continue;
-
-        carrySales.push(sale);
         carryIds.add(id);
+        carrySales.push(sale);
       }
     }
 
