@@ -219,11 +219,31 @@ body:before{
 .bottom b{color:var(--purple2);margin-left:5px}
 .status-error{color:#ff9c9c}
 .empty{
-  display:grid;place-items:center;min-height:250px;
-  color:var(--muted);font-size:20px;font-weight:800;text-align:center
+  display:grid;
+  place-items:center;
+  min-height:clamp(330px,46vh,520px);
+  text-align:center;
+  padding:28px 18px;
 }
-.empty strong{display:block;color:#eee7f2;font-size:24px;margin-bottom:7px}
-.empty span{display:block;color:var(--muted);font-size:15px;font-weight:700}
+.empty-call{
+  font-family:Georgia,'Times New Roman',serif;
+  font-size:clamp(42px,5.3vw,82px);
+  line-height:.96;
+  font-weight:900;
+  font-style:italic;
+  letter-spacing:-.035em;
+  color:#f4eef8;
+  text-shadow:0 0 28px rgba(143,60,255,.18);
+  max-width:780px;
+}
+.empty-call .beer{
+  display:block;
+  font-family:inherit;
+  font-style:normal;
+  font-size:clamp(54px,6vw,88px);
+  line-height:1;
+  margin-bottom:12px;
+}
 .warning{
   position:fixed;left:50%;bottom:10px;transform:translateX(-50%);
   background:rgba(20,11,27,.92);border:1px solid rgba(143,60,255,.35);
@@ -376,7 +396,7 @@ function render(d){
         <div class="ct">${x.cups} 🍺</div>
       </div>
     `).join('')
-    : '<div class="empty"><div><strong>🍺 O ranking ainda está zerado.</strong><span>Quem abre a rodada?</span></div></div>';
+    : '<div class="empty"><div class="empty-call"><span class="beer">🍺</span>Quem abre<br>a rodada?</div></div>';
 
   $('#stats').innerHTML=`
     <div class="stat"><strong>${d.stats?.sales ?? 0}</strong><span>VENDAS LIDAS</span></div>
