@@ -19,48 +19,44 @@ async function authenticate(baseUrl, idPartner, secret) {
   return body.token;
 }
 
-function cleanPreview(text='') {
-  return String(text)
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REMOVIDO]')
-    .slice(0, 500);
+function preview(text='') {
+  return String(text).slice(0, 900);
 }
 
-async function safeProbe(baseUrl, token, path, method='GET') {
+async function callCatalog(baseUrl, token, authMode) {
+  const authorization =
+    authMode === 'bearer'
+      ? `Bearer ${token}`
+      : token;
+
   try {
-    const r = await fetch(`${baseUrl.replace(/\/+$/,'')}${path}`, {
-      method,
+    const r = await fetch(`${baseUrl.replace(/\/+$/,'')}/catalog`, {
+      method: 'GET',
       headers: {
-        accept: 'application/json, text/plain, */*',
-        authorization: `Bearer ${token}`
+        accept: 'application/json',
+        authorization
       }
     });
 
     const text = await r.text();
-    let parsed = null;
-    try { parsed = JSON.parse(text); } catch {}
+    let body = null;
+    try { body = JSON.parse(text); } catch {}
 
     return {
-      path,
-      method,
+      authMode,
       status: r.status,
       ok: r.ok,
-      allow: r.headers.get('allow'),
       contentType: r.headers.get('content-type'),
       responseKeys:
-        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? Object.keys(parsed).slice(0, 40)
+        body && typeof body === 'object' && !Array.isArray(body)
+          ? Object.keys(body).slice(0, 50)
           : [],
-      arrayLength: Array.isArray(parsed) ? parsed.length : null,
-      preview: cleanPreview(
-        parsed
-          ? JSON.stringify(parsed)
-          : text
-      )
+      arrayLength: Array.isArray(body) ? body.length : null,
+      preview: preview(body ? JSON.stringify(body) : text)
     };
   } catch (e) {
     return {
-      path,
-      method,
+      authMode,
       ok: false,
       networkError: e.message
     };
@@ -94,41 +90,24 @@ export default async function handler(req, res) {
   try {
     const token = await authenticate(baseUrl, idPartner, secret);
 
-    // Somente descoberta/leitura.
-    // Primeiro procuramos documentação/esquema publicado pela própria API.
-    const probes = [
-      ['/', 'GET'],
-      ['/openapi.json', 'GET'],
-      ['/swagger.json', 'GET'],
-      ['/swagger/v1/swagger.json', 'GET'],
-      ['/api-docs', 'GET'],
-      ['/docs', 'GET'],
+    // O teste anterior confirmou que /catalog existe,
+    // mas Bearer foi rejeitado como token inválido.
+    // Agora comparamos RAW x Bearer usando o MESMO token recém-gerado.
+    const raw = await callCatalog(baseUrl, token, 'raw');
+    const bearer = await callCatalog(baseUrl, token, 'bearer');
 
-      // OPTIONS não cria/edita dados; serve apenas para descobrir rotas/métodos.
-      ['/products', 'OPTIONS'],
-      ['/product', 'OPTIONS'],
-      ['/menu', 'OPTIONS'],
-      ['/catalog', 'OPTIONS'],
-      ['/orders', 'OPTIONS'],
-      ['/order', 'OPTIONS'],
-      [`/stores/${encodeURIComponent(storeId)}`, 'OPTIONS'],
-      [`/stores/${encodeURIComponent(storeId)}/products`, 'OPTIONS'],
-      [`/stores/${encodeURIComponent(storeId)}/menu`, 'OPTIONS']
-    ];
-
-    const results = [];
-    for (const [path, method] of probes) {
-      results.push(await safeProbe(baseUrl, token, path, method));
-    }
+    const winner = [raw, bearer].find(x => x.ok);
 
     return res.status(200).json({
-      ok:true,
-      test:'saipos-order-api-discovery',
-      authenticated:true,
+      ok: true,
+      test: 'saipos-order-catalog-auth-mode',
+      authenticated: true,
       storeId,
       baseUrl,
-      note:'Somente GET/OPTIONS. Nenhum pedido foi criado, alterado ou cancelado. Token e Secret não são exibidos.',
-      results
+      catalogAccessible: !!winner,
+      workingAuthMode: winner?.authMode || null,
+      results: [raw, bearer],
+      note: 'Somente leitura em /catalog. Token e Secret não são exibidos. Nenhum pedido foi criado.'
     });
   } catch (e) {
     return res.status(500).json({
