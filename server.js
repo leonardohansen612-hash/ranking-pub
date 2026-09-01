@@ -6,6 +6,7 @@ import rankingHandler from './api/ranking.js';
 import backfillHandler from './api/backfill.js';
 import utcHourTestHandler from './api/utc-hour-test.js';
 import saiposWebhookHandler from './api/saipos-webhook.js';
+import orderApiTestHandler from './api/order-api-test.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -18,6 +19,7 @@ app.all('/api/ranking', rankingHandler);
 app.all('/api/backfill', backfillHandler);
 app.all('/api/utc-hour-test', utcHourTestHandler);
 app.all('/api/saipos-webhook', saiposWebhookHandler);
+app.all('/api/order-api-test', orderApiTestHandler);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
