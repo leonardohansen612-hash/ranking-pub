@@ -282,16 +282,25 @@ function beerText(x){
 }
 
 function setDateLabel(){
-  const now=new Date();
-  const date=now.toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'});
+  const parts = new Intl.DateTimeFormat('pt-BR',{
+    timeZone:'America/Sao_Paulo',
+    day:'2-digit', month:'2-digit', year:'numeric'
+  }).formatToParts(new Date());
+  const get=t=>parts.find(p=>p.type===t)?.value;
+  const day=get('day'), month=get('month'), year=get('year');
+  const monthNames=['','JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+  const m=Number(month);
+  const quarter=Math.floor((m-1)/3)+1;
+  const semester=m<=6?1:2;
+
   const labels={
-    today:'📅 HOJE',
-    month:'📅 ESTE MÊS',
-    quarter:'📅 ESTE TRIMESTRE',
-    semester:'📅 ESTE SEMESTRE',
-    year:'🏆 ESTE ANO'
+    today:`📅 HOJE • ${day}/${month}/${year}`,
+    month:`📅 ${monthNames[m]} DE ${year}`,
+    quarter:`📅 ${quarter}º TRIMESTRE DE ${year}`,
+    semester:`📅 ${semester}º SEMESTRE DE ${year}`,
+    year:`🏆 RANKING ${year}`
   };
-  $('#dateLabel').textContent=(labels[period]||'📅 PERÍODO')+'  •  '+date;
+  $('#dateLabel').textContent=labels[period]||'📅 PERÍODO';
 }
 
 async function load(){
