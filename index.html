@@ -46,7 +46,7 @@ body:before{
 }
 .topbar{
   display:grid;
-  grid-template-columns:1fr 350px 1fr;
+  grid-template-columns:1fr 350px 1.15fr;
   align-items:center;
   min-height:118px;
   gap:22px;
@@ -73,13 +73,13 @@ body:before{
 .controls{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
 .date-label{font-weight:900;font-size:18px;color:#d9cfe0}
 .tabs{
-  display:grid;grid-template-columns:1fr 1fr;gap:4px;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:4px;
   background:#0a090b;border:1px solid rgba(255,255,255,.12);
-  border-radius:14px;padding:4px;min-width:250px
+  border-radius:14px;padding:4px;min-width:520px
 }
 .tabs button{
   border:0;background:transparent;color:#a9a0af;padding:11px 20px;border-radius:10px;
-  font-size:16px;font-weight:950;cursor:pointer
+  font-size:14px;font-weight:950;cursor:pointer;white-space:nowrap
 }
 .tabs button.on{
   color:white;background:linear-gradient(135deg,#6520d9,#9d3fff);
@@ -216,7 +216,7 @@ body:before{
 @media(max-width:620px){
   .screen{padding:12px}.podium{grid-template-columns:1fr}.board-head{grid-template-columns:52px 1fr 80px}
   .row{grid-template-columns:46px 1fr 80px}.stats{grid-template-columns:repeat(2,1fr)}
-  .topbar{grid-template-columns:1fr 120px}.tabs{min-width:210px}.date-label{font-size:14px}
+  .topbar{grid-template-columns:1fr 120px}.tabs{min-width:100%;grid-template-columns:repeat(3,1fr)}.date-label{font-size:14px}
 }
 </style>
 </head>
@@ -236,8 +236,11 @@ body:before{
     <div class="controls">
       <div class="date-label" id="dateLabel"></div>
       <div class="tabs">
-        <button id="today" class="on">HOJE</button>
+        <button id="today" class="on">DIA</button>
         <button id="month">MÊS</button>
+        <button id="quarter">TRIMESTRE</button>
+        <button id="semester">SEMESTRE</button>
+        <button id="year">ANO</button>
       </div>
     </div>
   </header>
@@ -281,7 +284,14 @@ function beerText(x){
 function setDateLabel(){
   const now=new Date();
   const date=now.toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'});
-  $('#dateLabel').textContent=(period==='today'?'📅 HOJE  •  ':'📅 ESTE MÊS  •  ')+date;
+  const labels={
+    today:'📅 HOJE',
+    month:'📅 ESTE MÊS',
+    quarter:'📅 ESTE TRIMESTRE',
+    semester:'📅 ESTE SEMESTRE',
+    year:'🏆 ESTE ANO'
+  };
+  $('#dateLabel').textContent=(labels[period]||'📅 PERÍODO')+'  •  '+date;
 }
 
 async function load(){
@@ -362,14 +372,18 @@ function render(d){
 
 function setPeriod(p){
   period=p;
-  $('#today').classList.toggle('on',p==='today');
-  $('#month').classList.toggle('on',p==='month');
+  ['today','month','quarter','semester','year'].forEach(id=>{
+    $('#'+id).classList.toggle('on',p===id);
+  });
   setDateLabel();
   load();
 }
 
 $('#today').onclick=()=>setPeriod('today');
 $('#month').onclick=()=>setPeriod('month');
+$('#quarter').onclick=()=>setPeriod('quarter');
+$('#semester').onclick=()=>setPeriod('semester');
+$('#year').onclick=()=>setPeriod('year');
 
 setDateLabel();
 load();
