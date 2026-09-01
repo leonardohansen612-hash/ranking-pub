@@ -2,50 +2,267 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Tex Pub • Ranking do Copo</title>
 <style>
-:root{font-family:Inter,system-ui,Arial;background:#0c0711;color:#fff}
+:root{
+  --bg:#08070a;
+  --panel:#111014;
+  --panel2:#17131c;
+  --purple:#8f3cff;
+  --purple2:#b477ff;
+  --line:rgba(164,91,255,.42);
+  --text:#fffaf1;
+  --muted:#b7aebf;
+  --gold:#f2bf55;
+}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% 0,#3a1553 0,#160b20 42%,#08050b 100%)}
-.wrap{max-width:1500px;margin:auto;padding:28px 42px}
-.head{display:flex;align-items:end;justify-content:space-between;gap:20px}
-.ey{color:#c5a2dc;font-weight:800;letter-spacing:.18em}
-.title{font-size:clamp(34px,5vw,74px);font-weight:1000;margin:4px 0}
-.tabs{display:flex;gap:8px}
-.tabs button{border:1px solid #78518f;background:#21102d;color:white;padding:12px 20px;border-radius:999px;font-weight:900;cursor:pointer}
-.tabs button.on{background:#fff;color:#1a0b24}
-.status{color:#bda8c9;margin:10px 0 24px}
-.podium{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
-.card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);border-radius:24px;padding:24px;backdrop-filter:blur(8px)}
-.card.first{transform:translateY(-8px);border-color:#d4b3e8}
-.pos{font-size:28px}.name{font-size:clamp(24px,3vw,48px);font-weight:1000}
-.cups{font-size:clamp(34px,5vw,68px);font-weight:1000}
-.sub{color:#c9b8d2}.list{display:grid;gap:10px}
-.row{display:grid;grid-template-columns:70px 1fr auto;align-items:center;padding:16px 22px;background:rgba(255,255,255,.055);border-radius:18px}
-.row .n{font-size:28px;font-weight:900}.row .nm{font-size:24px;font-weight:900}.row .ct{font-size:28px;font-weight:1000}
-.empty{text-align:center;padding:80px 20px;font-size:24px;color:#c9b8d2}
-.warn{font-size:13px;color:#9f8bab;margin-top:10px}
-@media(max-width:800px){.wrap{padding:20px}.head{align-items:start;flex-direction:column}.podium{grid-template-columns:1fr}.card.first{transform:none}.row{grid-template-columns:48px 1fr auto}.row .nm{font-size:18px}}
+html,body{margin:0;width:100%;min-height:100%;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+body{
+  min-height:100vh;
+  overflow-x:hidden;
+  background:
+    radial-gradient(circle at 80% 38%, rgba(255,151,41,.12), transparent 28%),
+    radial-gradient(circle at 28% 15%, rgba(143,60,255,.13), transparent 32%),
+    linear-gradient(145deg,#050506 0%,#0b090d 45%,#080709 100%);
+}
+body:before{
+  content:"";
+  position:fixed;inset:0;pointer-events:none;opacity:.22;
+  background-image:
+    linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.014) 1px,transparent 1px);
+  background-size:42px 42px;
+}
+.screen{
+  width:min(1920px,100%);
+  min-height:100vh;
+  margin:auto;
+  padding:24px 34px 26px;
+  position:relative;
+  display:grid;
+  grid-template-rows:auto 1fr auto;
+  gap:14px;
+}
+.topbar{
+  display:grid;
+  grid-template-columns:1fr 350px 1fr;
+  align-items:center;
+  min-height:118px;
+  gap:22px;
+}
+.brand-title{display:flex;flex-direction:column;align-items:flex-start}
+.kicker{font-weight:950;letter-spacing:.12em;color:var(--purple2);font-size:clamp(18px,1.7vw,30px)}
+.page-title{
+  margin:0;
+  font-size:clamp(36px,4.3vw,76px);
+  line-height:.92;
+  font-weight:1000;
+  letter-spacing:-.045em;
+}
+.live{
+  display:flex;align-items:center;gap:8px;
+  margin-top:8px;color:var(--muted);font-size:13px;font-weight:800;letter-spacing:.055em
+}
+.live-dot{width:9px;height:9px;border-radius:50%;background:var(--purple2);box-shadow:0 0 16px var(--purple2)}
+.logo-wrap{
+  display:flex;align-items:center;justify-content:center;
+  height:118px;
+}
+.logo-wrap img{max-height:116px;max-width:100%;object-fit:contain;filter:drop-shadow(0 8px 24px rgba(0,0,0,.5))}
+.controls{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
+.date-label{font-weight:900;font-size:18px;color:#d9cfe0}
+.tabs{
+  display:grid;grid-template-columns:1fr 1fr;gap:4px;
+  background:#0a090b;border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;padding:4px;min-width:250px
+}
+.tabs button{
+  border:0;background:transparent;color:#a9a0af;padding:11px 20px;border-radius:10px;
+  font-size:16px;font-weight:950;cursor:pointer
+}
+.tabs button.on{
+  color:white;background:linear-gradient(135deg,#6520d9,#9d3fff);
+  box-shadow:0 6px 22px rgba(126,42,230,.32)
+}
+.content{
+  min-height:0;
+  display:grid;
+  grid-template-columns:minmax(0,1.68fr) minmax(340px,.82fr);
+  gap:18px;
+}
+.board{
+  min-width:0;
+  background:linear-gradient(180deg,rgba(20,17,23,.96),rgba(9,8,11,.97));
+  border:1px solid var(--line);
+  box-shadow:0 0 0 1px rgba(255,255,255,.02) inset,0 18px 60px rgba(0,0,0,.34);
+  border-radius:24px;
+  padding:14px 16px 15px;
+  display:grid;
+  grid-template-rows:auto auto 1fr auto;
+  min-height:0;
+}
+.board-head{
+  display:grid;grid-template-columns:72px 1fr 120px;
+  align-items:center;padding:4px 16px 10px;
+  color:#b987ff;font-weight:950;letter-spacing:.06em;font-size:14px;
+  border-bottom:1px solid rgba(255,255,255,.08)
+}
+.board-head span:last-child{text-align:right}
+.podium{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
+  padding:12px 0 10px
+}
+.podium-card{
+  position:relative;overflow:hidden;
+  border:1px solid rgba(255,255,255,.08);
+  background:linear-gradient(160deg,rgba(255,255,255,.065),rgba(255,255,255,.025));
+  border-radius:17px;padding:12px 14px;
+  min-height:110px;
+}
+.podium-card:after{
+  content:"";position:absolute;inset:auto -30px -60px auto;width:130px;height:130px;border-radius:50%;
+  background:radial-gradient(circle,rgba(143,60,255,.24),transparent 65%)
+}
+.podium-card.first{border-color:rgba(242,191,85,.5);box-shadow:0 0 28px rgba(242,191,85,.07) inset}
+.rankline{display:flex;align-items:center;gap:10px}
+.medal{font-size:27px}
+.podium-name{font-size:clamp(19px,1.75vw,31px);font-weight:1000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.podium-cups{font-size:clamp(25px,2.4vw,42px);font-weight:1000;color:var(--purple2);margin-top:6px}
+.podium-beers{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list{
+  display:grid;align-content:start;gap:7px;min-height:0;overflow:hidden
+}
+.row{
+  display:grid;grid-template-columns:58px minmax(0,1fr) 110px;
+  align-items:center;min-height:52px;
+  padding:7px 14px;
+  border-radius:13px;
+  background:linear-gradient(90deg,rgba(255,255,255,.055),rgba(255,255,255,.025));
+  border:1px solid rgba(255,255,255,.055)
+}
+.pos{
+  width:34px;height:34px;border-radius:50%;
+  display:grid;place-items:center;
+  background:linear-gradient(135deg,#4e198e,#7f2fe3);
+  color:white;font-weight:1000;font-size:15px
+}
+.nm{font-size:clamp(17px,1.6vw,27px);font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.beers{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ct{text-align:right;font-size:clamp(20px,2vw,32px);font-weight:1000;color:var(--purple2)}
+.stats{
+  margin-top:10px;
+  display:grid;grid-template-columns:repeat(4,1fr);
+  border:1px solid rgba(143,60,255,.25);
+  background:#0b090d;border-radius:14px;overflow:hidden
+}
+.stat{padding:9px 12px;text-align:center;border-right:1px solid rgba(255,255,255,.06)}
+.stat:last-child{border-right:0}
+.stat strong{display:block;color:var(--purple2);font-size:22px;line-height:1}
+.stat span{display:block;color:#dad2df;font-size:10px;font-weight:850;letter-spacing:.08em;margin-top:4px}
+.mascot-panel{
+  min-width:0;position:relative;overflow:hidden;
+  border:1px solid rgba(143,60,255,.28);
+  border-radius:24px;
+  background:
+    radial-gradient(circle at 50% 28%,rgba(143,60,255,.18),transparent 36%),
+    radial-gradient(circle at 50% 78%,rgba(232,124,28,.12),transparent 36%),
+    linear-gradient(180deg,#151119,#09080a);
+  display:flex;align-items:flex-end;justify-content:center;
+}
+.mascot-panel:before{
+  content:"";position:absolute;inset:0;opacity:.35;
+  background:
+    linear-gradient(90deg,transparent 48%,rgba(255,255,255,.02) 50%,transparent 52%),
+    radial-gradient(circle at 35% 58%,rgba(255,171,72,.12),transparent 18%),
+    radial-gradient(circle at 80% 45%,rgba(255,171,72,.09),transparent 16%);
+}
+.mascot-panel img{
+  position:relative;z-index:2;
+  width:min(94%,620px);
+  max-height:100%;
+  object-fit:contain;object-position:center bottom;
+  filter:drop-shadow(0 22px 32px rgba(0,0,0,.58))
+}
+.mascot-badge{
+  position:absolute;z-index:3;bottom:16px;left:16px;right:16px;
+  background:rgba(8,7,10,.73);backdrop-filter:blur(7px);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:14px;padding:10px 13px;text-align:center;
+  font-size:12px;font-weight:850;letter-spacing:.04em;color:#ddd4e2
+}
+.bottom{
+  min-height:32px;display:flex;justify-content:center;align-items:center;
+  color:#d8d0dc;font-size:clamp(14px,1.3vw,21px);font-weight:700
+}
+.bottom b{color:var(--purple2);margin-left:5px}
+.status-error{color:#ff9c9c}
+.empty{
+  display:grid;place-items:center;min-height:250px;
+  color:var(--muted);font-size:20px;font-weight:800
+}
+.warning{
+  position:fixed;left:50%;bottom:10px;transform:translateX(-50%);
+  background:rgba(20,11,27,.92);border:1px solid rgba(143,60,255,.35);
+  color:#cbbbd5;padding:7px 12px;border-radius:999px;font-size:11px;z-index:10
+}
+@media(max-width:980px){
+  .screen{padding:18px}
+  .topbar{grid-template-columns:1fr 170px;min-height:auto}
+  .brand-title{grid-column:1}.logo-wrap{grid-column:2;grid-row:1;height:90px}.logo-wrap img{max-height:88px}
+  .controls{grid-column:1/-1;grid-row:2;flex-direction:row;align-items:center;justify-content:space-between}
+  .content{grid-template-columns:1fr}.mascot-panel{min-height:520px}
+}
+@media(max-width:620px){
+  .screen{padding:12px}.podium{grid-template-columns:1fr}.board-head{grid-template-columns:52px 1fr 80px}
+  .row{grid-template-columns:46px 1fr 80px}.stats{grid-template-columns:repeat(2,1fr)}
+  .topbar{grid-template-columns:1fr 120px}.tabs{min-width:210px}.date-label{font-size:14px}
+}
 </style>
 </head>
 <body>
-<main class="wrap">
-  <div class="head">
-    <div>
-      <div class="ey">TEX PUB</div>
-      <h1 class="title">RANKING DO COPO 🍺</h1>
+<main class="screen">
+  <header class="topbar">
+    <div class="brand-title">
+      <div class="kicker">🏆 RANKING</div>
+      <h1 class="page-title">DO COPO</h1>
+      <div class="live"><span class="live-dot"></span> ATUALIZAÇÃO AUTOMÁTICA A CADA 60 SEGUNDOS</div>
     </div>
-    <div class="tabs">
-      <button id="today" class="on">HOJE</button>
-      <button id="month">MÊS</button>
+
+    <div class="logo-wrap">
+      <img src="/assets/logo-tex-pub.png" alt="Tex Pub">
     </div>
-  </div>
-  <div class="status" id="status">Conectando ao Saipos…</div>
-  <section class="podium" id="podium"></section>
-  <section class="list" id="list"></section>
-  <div class="warn" id="warn"></div>
+
+    <div class="controls">
+      <div class="date-label" id="dateLabel"></div>
+      <div class="tabs">
+        <button id="today" class="on">HOJE</button>
+        <button id="month">MÊS</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="content">
+    <section class="board">
+      <div class="board-head">
+        <span>#</span><span>CLIENTE</span><span>COPOS 🍺</span>
+      </div>
+      <div class="podium" id="podium"></div>
+      <div class="list" id="list"></div>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <aside class="mascot-panel">
+      <img src="/assets/texuguinho.png" alt="Texuguinho brindando">
+      <div class="mascot-badge">O MELHOR DIA DA SEMANA COMEÇA AQUI 🍺</div>
+    </aside>
+  </section>
+
+  <footer class="bottom">Mais amigos. Mais histórias.<b>Mais copos.</b></footer>
 </main>
+
+<div class="warning" id="warning" hidden></div>
+
 <script>
 let period='today';
 let loading=false;
@@ -60,22 +277,28 @@ function beerText(x){
     .join(' • ') || 'Cervejas Saipos';
 }
 
+function setDateLabel(){
+  const now=new Date();
+  const date=now.toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'});
+  $('#dateLabel').textContent=(period==='today'?'📅 HOJE  •  ':'📅 ESTE MÊS  •  ')+date;
+}
+
 async function load(){
   if(loading) return;
   loading=true;
-  try{
-    $('#status').textContent=period==='month'
-      ? 'Montando ranking do mês… a primeira carga pode demorar.'
-      : 'Atualizando…';
+  setDateLabel();
 
+  try{
     const r=await fetch('/api/ranking?period='+period,{cache:'no-store'});
     const d=await r.json();
-    if(!d.ok) throw Error(d.error);
+    if(!d.ok) throw Error(d.error || 'Falha ao carregar ranking');
     render(d);
   }catch(e){
-    $('#status').textContent='Erro: '+e.message;
     $('#podium').innerHTML='';
-    $('#list').innerHTML='<div class="empty">Não foi possível atualizar o ranking.</div>';
+    $('#list').innerHTML='<div class="empty status-error">Não foi possível atualizar o ranking.</div>';
+    $('#stats').innerHTML='';
+    $('#warning').hidden=false;
+    $('#warning').textContent='Erro: '+e.message;
   }finally{
     loading=false;
   }
@@ -83,33 +306,43 @@ async function load(){
 
 function render(d){
   const a=d.ranking||[];
-  $('#status').textContent=
-    `Atualizado ${new Date(d.updatedAt).toLocaleTimeString('pt-BR')} • `+
-    `${d.stats.beerCups||0} copos • ${d.stats.sales||0} vendas lidas`;
-
   const medals=['🥇','🥈','🥉'];
+
   $('#podium').innerHTML=a.slice(0,3).map((x,i)=>`
-    <article class="card ${i===0?'first':''}">
-      <div class="pos">${medals[i]}</div>
-      <div class="name">${esc(x.name)}</div>
-      <div class="cups">🍺 ${x.cups}</div>
-      <div class="sub">${esc(beerText(x))}</div>
-    </article>`).join('');
+    <article class="podium-card ${i===0?'first':''}">
+      <div class="rankline">
+        <div class="medal">${medals[i]}</div>
+        <div class="podium-name">${esc(x.name)}</div>
+      </div>
+      <div class="podium-cups">🍺 ${x.cups}</div>
+      <div class="podium-beers">${esc(beerText(x))}</div>
+    </article>
+  `).join('');
 
   $('#list').innerHTML=a.length
-    ? a.slice(3,20).map((x,i)=>`
+    ? a.slice(3,10).map((x,i)=>`
       <div class="row">
-        <div class="n">${i+4}º</div>
+        <div class="pos">${i+4}</div>
         <div>
           <div class="nm">${esc(x.name)}</div>
-          <div class="sub">${esc(beerText(x))}</div>
+          <div class="beers">${esc(beerText(x))}</div>
         </div>
-        <div class="ct">🍺 ${x.cups}</div>
-      </div>`).join('')
+        <div class="ct">${x.cups} 🍺</div>
+      </div>
+    `).join('')
     : '<div class="empty">Nenhuma cerveja identificada no período.</div>';
 
-  $('#warn').textContent=(d.warnings||[]).length
-    ? `${d.warnings.length} consulta(s) da Saipos falharam e serão tentadas novamente na próxima atualização.`
+  $('#stats').innerHTML=`
+    <div class="stat"><strong>${d.stats?.sales ?? 0}</strong><span>VENDAS LIDAS</span></div>
+    <div class="stat"><strong>${d.stats?.saleGroups ?? 0}</strong><span>COMANDAS</span></div>
+    <div class="stat"><strong>${d.stats?.beerCups ?? 0}</strong><span>COPOS</span></div>
+    <div class="stat"><strong>${d.stats?.days ?? 1}</strong><span>DIAS</span></div>
+  `;
+
+  const warns=d.warnings||[];
+  $('#warning').hidden=!warns.length;
+  $('#warning').textContent=warns.length
+    ? `${warns.length} consulta(s) da Saipos não responderam nesta atualização.`
     : '';
 }
 
@@ -117,13 +350,17 @@ function setPeriod(p){
   period=p;
   $('#today').classList.toggle('on',p==='today');
   $('#month').classList.toggle('on',p==='month');
+  setDateLabel();
   load();
 }
 
 $('#today').onclick=()=>setPeriod('today');
 $('#month').onclick=()=>setPeriod('month');
 
+setDateLabel();
 load();
+
+// Mantém exatamente o comportamento já validado: HOJE atualiza a cada 60 segundos.
 setInterval(()=>{ if(period==='today') load(); },60000);
 </script>
 </body>
