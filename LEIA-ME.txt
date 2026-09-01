@@ -1,17 +1,16 @@
-TEX PUB — Ranking do Copo | DIA / MÊS / TRIMESTRE / SEMESTRE / ANO
+TEX RANKING - MIGRAÇÃO PARA RENDER V1
 
-Substituir somente:
-- index.html
-- api/ranking.js
+Suba na RAIZ do repositório:
+- package.json  (substituir o atual)
+- server.js     (novo arquivo)
 
-O ranking oficial começa em 02/09/2026.
-Snapshots anteriores podem continuar no Firestore, mas não entram nos acumulados oficiais.
+Não mexa na pasta api.
 
-Períodos:
-- DIA: Saipos do dia atual
-- MÊS: Firestore
-- TRIMESTRE: Firestore
-- SEMESTRE: Firestore
-- ANO: Firestore
+Depois, no Render:
+Build Command:
+  npm install && npm run build
 
-A automação GitHub Actions já existente continua igual.
+Start Command:
+  npm start
+
+Ainda NÃO faça deploy antes de configurar as variáveis de ambiente.
