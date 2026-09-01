@@ -265,7 +265,8 @@ body:before{
 
 <script>
 let period='today';
-let loading=false;
+let requestId=0;
+let controller=null;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 
@@ -284,23 +285,36 @@ function setDateLabel(){
 }
 
 async function load(){
-  if(loading) return;
-  loading=true;
   setDateLabel();
 
+  const thisRequest=++requestId;
+  const requestedPeriod=period;
+
+  if(controller) controller.abort();
+  controller=new AbortController();
+
   try{
-    const r=await fetch('/api/ranking?period='+period,{cache:'no-store'});
+    const r=await fetch('/api/ranking?period='+requestedPeriod,{
+      cache:'no-store',
+      signal:controller.signal
+    });
+
     const d=await r.json();
+
+    // Ignora respostas antigas caso o usuário tenha trocado de aba.
+    if(thisRequest!==requestId || requestedPeriod!==period) return;
+
     if(!d.ok) throw Error(d.error || 'Falha ao carregar ranking');
     render(d);
   }catch(e){
+    if(e.name==='AbortError') return;
+    if(thisRequest!==requestId) return;
+
     $('#podium').innerHTML='';
     $('#list').innerHTML='<div class="empty status-error">Não foi possível atualizar o ranking.</div>';
     $('#stats').innerHTML='';
     $('#warning').hidden=false;
     $('#warning').textContent='Erro: '+e.message;
-  }finally{
-    loading=false;
   }
 }
 
