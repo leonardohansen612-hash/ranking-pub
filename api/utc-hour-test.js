@@ -1,37 +1,6 @@
-import { saiposFetch, rows } from './_saipos.js';
+import { fetchHour } from './_saipos.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-function saoPauloParts() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23'
-  }).formatToParts(new Date());
-
-  return Object.fromEntries(parts.map(p => [p.type, p.value]));
-}
-
-function pad(n){ return String(n).padStart(2,'0'); }
-
-function addMinutes(date, time, deltaMinutes) {
-  const [y,m,d] = date.split('-').map(Number);
-  const [hh,mm] = time.split(':').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d, hh, mm + deltaMinutes, 0));
-
-  return {
-    date: `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth()+1)}-${pad(dt.getUTCDate())}`,
-    time: `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}`
-  };
-}
-
-function stamp(x, seconds='00') {
-  return `${x.date} ${x.time}:${seconds}`;
-}
 
 function saleView(s) {
   return {
@@ -44,99 +13,78 @@ function saleView(s) {
   };
 }
 
-async function queryUpdatedWindow(centerDate, centerTime, offsetMinutes) {
-  const center = addMinutes(centerDate, centerTime, offsetMinutes);
-  const start = addMinutes(center.date, center.time, -10);
-  const end = addMinutes(center.date, center.time, 10);
-
-  let lastError = null;
-
-  for (let attempt=1; attempt<=2; attempt++) {
-    try {
-      const body = await saiposFetch('/search_sales', {
-        p_date_column_filter: 'updated_at',
-        p_filter_date_start: stamp(start, '00'),
-        p_filter_date_end: stamp(end, '59'),
-        p_limit: 100,
-        p_offset: 0
-      });
-
-      const sales = rows(body);
-
-      return {
-        offsetMinutes,
-        range: {
-          start: stamp(start, '00'),
-          end: stamp(end, '59')
-        },
-        count: sales.length,
-        sales: sales.map(saleView)
-      };
-    } catch (e) {
-      lastError = e;
-      if (attempt < 2) await sleep(1200);
-    }
-  }
-
-  return {
-    offsetMinutes,
-    range: {
-      start: stamp(start, '00'),
-      end: stamp(end, '59')
-    },
-    error: lastError?.message || 'Falha Saipos'
-  };
-}
-
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
-  try {
-    const now = saoPauloParts();
-    const nowDate = `${now.year}-${now.month}-${now.day}`;
-    const nowTime = `${now.hour}:${now.minute}`;
+  const date = String(req.query.date || '2026-09-01');
+  const name = String(req.query.name || 'Tio Zé');
+  const wanted = name.trim().toLowerCase();
 
-    const name = String(req.query.name || 'Tio Zé');
-    const wanted = name.trim().toLowerCase();
+  const results = [];
+  const matches = [];
 
-    // Procura updates recentes em janelas próximas de agora.
-    // Testamos o relógio local e possíveis deslocamentos de +1h/+2h/+3h.
-    const offsets = [0, 60, 120, 180];
-
-    const results = [];
-    for (const offset of offsets) {
-      const result = await queryUpdatedWindow(nowDate, nowTime, offset);
-      results.push(result);
-      await sleep(500);
-    }
-
-    const matches = [];
-
-    for (const result of results) {
-      for (const sale of (result.sales || [])) {
-        const desc = String(sale.desc_sale || '').trim().toLowerCase();
-        if (wanted && desc.includes(wanted)) {
-          matches.push({
-            offsetMinutes: result.offsetMinutes,
-            ...sale
-          });
-        }
-      }
-    }
-
-    return res.status(200).json({
-      ok: true,
-      saoPauloNow: `${nowDate} ${nowTime}`,
-      targetName: name,
-      column: 'updated_at',
-      note: 'Diagnóstico somente leitura. Busca vendas atualizadas recentemente, sem alterar ranking ou Firebase.',
-      matches,
-      results
-    });
-  } catch (e) {
-    return res.status(500).json({
-      ok: false,
-      error: e.message
-    });
+  // Reproduz a cobertura ampla que funcionava antes:
+  // todas as 24 horas do dia + 0,1,2,3 do dia seguinte.
+  const slots = [];
+  for (let hour = 0; hour <= 23; hour++) {
+    slots.push({ date, hour });
   }
+
+  // calcula dia seguinte
+  const [y,m,d] = date.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + 1));
+  const nextDate = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
+
+  for (let hour = 0; hour <= 3; hour++) {
+    slots.push({ date: nextDate, hour });
+  }
+
+  for (const slot of slots) {
+    try {
+      const sales = await fetchHour('/search_sales', slot.date, slot.hour);
+      const viewed = sales.map(saleView);
+
+      const hit = viewed.filter(s => {
+        const desc = String(s.desc_sale || '').trim().toLowerCase();
+        return wanted && desc.includes(wanted);
+      });
+
+      results.push({
+        date: slot.date,
+        hour: slot.hour,
+        count: sales.length,
+        matches: hit
+      });
+
+      for (const sale of hit) {
+        matches.push({
+          slotDate: slot.date,
+          slotHour: slot.hour,
+          ...sale
+        });
+      }
+    } catch (e) {
+      results.push({
+        date: slot.date,
+        hour: slot.hour,
+        error: e.message
+      });
+    }
+
+    // reduz pressão na API
+    await sleep(700);
+  }
+
+  return res.status(200).json({
+    ok: true,
+    target: { date, name },
+    note: 'Diagnóstico somente leitura. Varre 00-23 do dia informado e 00-03 do dia seguinte via created_at.',
+    matches,
+    summary: {
+      slotsChecked: slots.length,
+      slotsWithErrors: results.filter(r => r.error).length,
+      totalMatches: matches.length
+    },
+    results
+  });
 }
