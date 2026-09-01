@@ -1,62 +1,41 @@
-async function authenticate(baseUrl, idPartner, secret) {
-  const r = await fetch(`${baseUrl.replace(/\/+$/,'')}/auth`, {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({ idPartner, secret })
-  });
-
-  const text = await r.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch {}
-
-  if (!r.ok || !body?.token) {
-    throw new Error(`Falha na autenticação (${r.status}).`);
-  }
-
-  return body.token;
-}
-
-function preview(text='') {
-  return String(text).slice(0, 900);
-}
-
-async function callCatalog(baseUrl, token, authMode) {
-  const authorization =
-    authMode === 'bearer'
-      ? `Bearer ${token}`
-      : token;
-
+async function authenticateDetailed(baseUrl, idPartner, secret) {
   try {
-    const r = await fetch(`${baseUrl.replace(/\/+$/,'')}/catalog`, {
-      method: 'GET',
+    const r = await fetch(`${baseUrl.replace(/\/+$/,'')}/auth`, {
+      method: 'POST',
       headers: {
         accept: 'application/json',
-        authorization
-      }
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ idPartner, secret })
     });
 
     const text = await r.text();
     let body = null;
     try { body = JSON.parse(text); } catch {}
 
+    const safeBody =
+      body && typeof body === 'object'
+        ? {
+            type: body.type ?? null,
+            errorCode: body.errorCode ?? null,
+            dateTime: body.dateTime ?? null,
+            errorMessage: body.errorMessage ?? null,
+            guidRequest: body.guidRequest ?? null,
+            responseKeys: Object.keys(body).filter(k => k !== 'token').slice(0, 30),
+            hasToken: !!body.token
+          }
+        : null;
+
     return {
-      authMode,
       status: r.status,
       ok: r.ok,
       contentType: r.headers.get('content-type'),
-      responseKeys:
-        body && typeof body === 'object' && !Array.isArray(body)
-          ? Object.keys(body).slice(0, 50)
-          : [],
-      arrayLength: Array.isArray(body) ? body.length : null,
-      preview: preview(body ? JSON.stringify(body) : text)
+      safeBody,
+      textPreview: safeBody ? null : String(text).slice(0, 500)
     };
   } catch (e) {
     return {
-      authMode,
+      status: null,
       ok: false,
       networkError: e.message
     };
@@ -87,33 +66,19 @@ export default async function handler(req, res) {
     });
   }
 
-  try {
-    const token = await authenticate(baseUrl, idPartner, secret);
+  const auth = await authenticateDetailed(baseUrl, idPartner, secret);
 
-    // O teste anterior confirmou que /catalog existe,
-    // mas Bearer foi rejeitado como token inválido.
-    // Agora comparamos RAW x Bearer usando o MESMO token recém-gerado.
-    const raw = await callCatalog(baseUrl, token, 'raw');
-    const bearer = await callCatalog(baseUrl, token, 'bearer');
-
-    const winner = [raw, bearer].find(x => x.ok);
-
-    return res.status(200).json({
-      ok: true,
-      test: 'saipos-order-catalog-auth-mode',
-      authenticated: true,
-      storeId,
-      baseUrl,
-      catalogAccessible: !!winner,
-      workingAuthMode: winner?.authMode || null,
-      results: [raw, bearer],
-      note: 'Somente leitura em /catalog. Token e Secret não são exibidos. Nenhum pedido foi criado.'
-    });
-  } catch (e) {
-    return res.status(500).json({
-      ok:false,
-      authenticated:false,
-      error:e.message
-    });
-  }
+  return res.status(200).json({
+    ok: auth.ok,
+    test: 'saipos-order-auth-diagnostic',
+    configured:{
+      partnerId: true,
+      secret: true,
+      storeId: true
+    },
+    storeId,
+    baseUrl,
+    auth,
+    note:'Diagnóstico somente do /auth. Secret, Partner ID e token não são exibidos. Nenhum pedido é criado.'
+  });
 }
