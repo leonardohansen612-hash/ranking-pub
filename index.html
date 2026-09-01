@@ -226,14 +226,20 @@ body:before{
   padding:28px 18px;
 }
 .empty-call{
-  font-family:Georgia,'Times New Roman',serif;
+  font-family:Impact,'Arial Black','Franklin Gothic Heavy',sans-serif;
   font-size:clamp(42px,5.3vw,82px);
-  line-height:.96;
-  font-weight:900;
+  line-height:.86;
+  font-weight:1000;
   font-style:italic;
-  letter-spacing:-.035em;
+  text-transform:uppercase;
+  letter-spacing:-.055em;
   color:#f4eef8;
-  text-shadow:0 0 28px rgba(143,60,255,.18);
+  -webkit-text-stroke:1px rgba(255,255,255,.16);
+  text-shadow:
+    3px 3px 0 rgba(143,60,255,.42),
+    -2px 1px 0 rgba(255,255,255,.07),
+    0 0 30px rgba(143,60,255,.16);
+  transform:rotate(-2deg) skewX(-5deg);
   max-width:780px;
 }
 .empty-call .beer{
@@ -242,7 +248,8 @@ body:before{
   font-style:normal;
   font-size:clamp(54px,6vw,88px);
   line-height:1;
-  margin-bottom:12px;
+  margin-bottom:18px;
+  transform:rotate(2deg) skewX(5deg);
 }
 .warning{
   position:fixed;left:50%;bottom:10px;transform:translateX(-50%);
