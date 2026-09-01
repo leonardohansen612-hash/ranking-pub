@@ -226,21 +226,27 @@ body:before{
   padding:28px 18px;
 }
 .empty-call{
-  font-family:Impact,'Arial Black','Franklin Gothic Heavy',sans-serif;
-  font-size:clamp(42px,5.3vw,82px);
-  line-height:.86;
+  font-family:'Arial Black',Impact,'Trebuchet MS',sans-serif;
+  font-size:clamp(38px,4.8vw,76px);
+  line-height:1.12;
   font-weight:1000;
-  font-style:italic;
+  font-style:normal;
   text-transform:uppercase;
-  letter-spacing:-.055em;
-  color:#f4eef8;
-  -webkit-text-stroke:1px rgba(255,255,255,.16);
-  text-shadow:
-    3px 3px 0 rgba(143,60,255,.42),
-    -2px 1px 0 rgba(255,255,255,.07),
-    0 0 30px rgba(143,60,255,.16);
-  transform:rotate(-2deg) skewX(-5deg);
-  max-width:780px;
+  letter-spacing:.025em;
+  word-spacing:.16em;
+  color:#f5eff8;
+  -webkit-text-stroke:2px rgba(255,255,255,.96);
+  paint-order:stroke fill;
+  filter:
+    drop-shadow(3px 3px 0 #0a070d)
+    drop-shadow(-2px 2px 0 #0a070d)
+    drop-shadow(0 0 12px rgba(143,60,255,.25));
+  transform:rotate(-1deg);
+  max-width:900px;
+}
+.empty-call .street-line{
+  display:block;
+  margin:.08em 0;
 }
 .empty-call .beer{
   display:block;
@@ -248,8 +254,7 @@ body:before{
   font-style:normal;
   font-size:clamp(54px,6vw,88px);
   line-height:1;
-  margin-bottom:18px;
-  transform:rotate(2deg) skewX(5deg);
+  margin-bottom:12px;
 }
 .warning{
   position:fixed;left:50%;bottom:10px;transform:translateX(-50%);
@@ -403,7 +408,7 @@ function render(d){
         <div class="ct">${x.cups} 🍺</div>
       </div>
     `).join('')
-    : '<div class="empty"><div class="empty-call"><span class="beer">🍺</span>Quem abre<br>a rodada?</div></div>';
+    : '<div class="empty"><div class="empty-call"><span class="beer">🍺</span><span class="street-line">QUEM ABRE</span><span class="street-line">A RODADA?</span></div></div>';
 
   $('#stats').innerHTML=`
     <div class="stat"><strong>${d.stats?.sales ?? 0}</strong><span>VENDAS LIDAS</span></div>
