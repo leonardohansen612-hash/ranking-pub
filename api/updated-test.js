@@ -13,8 +13,22 @@ export default async function handler(req, res) {
     const minutes = Math.max(1, Math.min(60, Number(req.query.minutes || 10)));
     const start = new Date(now.getTime() - minutes * 60 * 1000);
 
-    // Saipos Data API aceita timestamps sem timezone explícito.
-    const fmt = (d) => d.toISOString().slice(0, 19);
+    // A Saipos trabalha com horário local de São Paulo nesses filtros.
+    const fmt = (d) => {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).formatToParts(d);
+
+      const get = (type) => parts.find((p) => p.type === type)?.value;
+      return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`;
+    };
 
     const params = new URLSearchParams({
       p_date_column_filter: "updated_at",
