@@ -75,32 +75,62 @@ jobs:
           ids = [str(s.get("id_sale")) for s in sales if s.get("id_sale")]
           wanted = set(ids)
 
-          # Descobre as horas de criação das vendas alteradas
-          hours = set()
-          for s in sales:
-              created = s.get("created_at")
-              if created and len(created) >= 13:
-                  hours.add((created[:10], created[11:13]))
+          # Busca os itens numa janela curta ao redor da criação da venda.
+          # Isso evita os timeouts que a Saipos pode dar em consultas de 1 hora.
+          import time
+          from urllib.error import HTTPError
 
           groups = []
-          for date, hour in sorted(hours):
+          seen_windows = set()
+
+          for s in sales:
+              created = s.get("created_at")
+              if not created:
+                  continue
+
+              try:
+                  created_dt = datetime.fromisoformat(str(created).replace("Z", ""))
+              except Exception:
+                  continue
+
+              # Janela de 10 minutos ao redor da criação da venda.
+              w_start = created_dt - timedelta(minutes=2)
+              w_end = created_dt + timedelta(minutes=8)
+              window_key = (w_start.strftime("%Y-%m-%d %H:%M:%S"), w_end.strftime("%Y-%m-%d %H:%M:%S"))
+
+              if window_key in seen_windows:
+                  continue
+              seen_windows.add(window_key)
+
               iparams = {
                   "p_date_column_filter": "created_at",
-                  "p_filter_date_start": f"{date} {hour}:00:00",
-                  "p_filter_date_end": f"{date} {hour}:59:59",
+                  "p_filter_date_start": window_key[0],
+                  "p_filter_date_end": window_key[1],
                   "p_limit": "300",
                   "p_offset": "0",
               }
+
               iurl = "https://data.saipos.io/v1/sales_items?" + urllib.parse.urlencode(iparams)
-              ireq = urllib.request.Request(
-                  iurl,
-                  headers={
-                      "Authorization": token,
-                      "accept": "application/json",
-                  },
-              )
-              with urllib.request.urlopen(ireq, timeout=90) as r:
-                  payload_items = json.load(r)
+
+              payload_items = None
+              for attempt in range(3):
+                  try:
+                      ireq = urllib.request.Request(
+                          iurl,
+                          headers={
+                              "Authorization": token,
+                              "accept": "application/json",
+                          },
+                      )
+                      with urllib.request.urlopen(ireq, timeout=45) as r:
+                          payload_items = json.load(r)
+                      break
+                  except HTTPError as e:
+                      if e.code == 504 and attempt < 2:
+                          print(f"Saipos 504 nos itens; tentativa {attempt+2}/3...")
+                          time.sleep(3 * (attempt + 1))
+                          continue
+                      raise
 
               if isinstance(payload_items, list):
                   data = payload_items
