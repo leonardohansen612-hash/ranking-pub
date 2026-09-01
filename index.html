@@ -72,19 +72,6 @@ body:before{
 .logo-wrap img{max-height:116px;max-width:100%;object-fit:contain;filter:drop-shadow(0 8px 24px rgba(0,0,0,.5))}
 .controls{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
 .date-label{font-weight:900;font-size:18px;color:#d9cfe0}
-.tabs{
-  display:grid;grid-template-columns:repeat(5,1fr);gap:4px;
-  background:#0a090b;border:1px solid rgba(255,255,255,.12);
-  border-radius:14px;padding:4px;min-width:520px
-}
-.tabs button{
-  border:0;background:transparent;color:#a9a0af;padding:11px 20px;border-radius:10px;
-  font-size:14px;font-weight:950;cursor:pointer;white-space:nowrap
-}
-.tabs button.on{
-  color:white;background:linear-gradient(135deg,#6520d9,#9d3fff);
-  box-shadow:0 6px 22px rgba(126,42,230,.32)
-}
 .content{
   min-height:0;
   display:grid;
@@ -101,18 +88,6 @@ body:before{
   display:grid;
   grid-template-rows:auto auto 1fr auto;
   min-height:0;
-}
-.year-prize{
-  margin:0 0 10px;
-  padding:9px 14px;
-  border:1px solid rgba(242,191,85,.28);
-  background:linear-gradient(90deg,rgba(242,191,85,.08),rgba(143,60,255,.07));
-  border-radius:12px;
-  color:#f1d28c;
-  text-align:center;
-  font-size:12px;
-  font-weight:950;
-  letter-spacing:.08em;
 }
 .board-head{
   display:grid;grid-template-columns:72px 1fr 120px;
@@ -271,7 +246,7 @@ body:before{
 @media(max-width:620px){
   .screen{padding:12px}.podium{grid-template-columns:1fr}.board-head{grid-template-columns:52px 1fr 80px}
   .row{grid-template-columns:46px 1fr 80px}.stats{grid-template-columns:repeat(2,1fr)}
-  .topbar{grid-template-columns:1fr 120px}.tabs{min-width:100%;grid-template-columns:repeat(3,1fr)}.date-label{font-size:14px}
+  .topbar{grid-template-columns:1fr 120px}.date-label{font-size:14px}
 }
 </style>
 </head>
@@ -290,19 +265,11 @@ body:before{
 
     <div class="controls">
       <div class="date-label" id="dateLabel"></div>
-      <div class="tabs">
-        <button id="today" class="on">DIA</button>
-        <button id="month">MÊS</button>
-        <button id="quarter">TRIMESTRE</button>
-        <button id="semester">SEMESTRE</button>
-        <button id="year">ANO</button>
-      </div>
     </div>
   </header>
 
   <section class="content">
     <section class="board">
-      <div class="year-prize" id="yearPrize" hidden>🏆 RANKING ANUAL • PREMIAÇÃO PARA O TOP 3</div>
       <div class="board-head">
         <span>#</span><span>CLIENTE</span><span>COPOS 🍺</span>
       </div>
@@ -323,7 +290,6 @@ body:before{
 <div class="warning" id="warning" hidden></div>
 
 <script>
-let period='today';
 let requestId=0;
 let controller=null;
 const $=s=>document.querySelector(s);
@@ -331,32 +297,21 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 
 
 function setDateLabel(){
-  const parts = new Intl.DateTimeFormat('pt-BR',{
+  const label = new Intl.DateTimeFormat('pt-BR',{
     timeZone:'America/Sao_Paulo',
-    day:'2-digit', month:'2-digit', year:'numeric'
-  }).formatToParts(new Date());
-  const get=t=>parts.find(p=>p.type===t)?.value;
-  const day=get('day'), month=get('month'), year=get('year');
-  const monthNames=['','JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
-  const m=Number(month);
-  const quarter=Math.floor((m-1)/3)+1;
-  const semester=m<=6?1:2;
+    day:'2-digit',
+    month:'2-digit',
+    year:'numeric'
+  }).format(new Date());
 
-  const labels={
-    today:`📅 HOJE • ${day}/${month}/${year}`,
-    month:`📅 ${monthNames[m]} DE ${year}`,
-    quarter:`📅 ${quarter}º TRIMESTRE DE ${year}`,
-    semester:`📅 ${semester}º SEMESTRE DE ${year}`,
-    year:`🏆 RANKING ${year}`
-  };
-  $('#dateLabel').textContent=labels[period]||'📅 PERÍODO';
+  $('#dateLabel').textContent=`📅 HOJE • ${label}`;
 }
 
 async function load(){
   setDateLabel();
 
   const thisRequest=++requestId;
-  const requestedPeriod=period;
+  const requestedPeriod='today';
 
   if(controller) controller.abort();
   controller=new AbortController();
@@ -370,7 +325,7 @@ async function load(){
     const d=await r.json();
 
     // Ignora respostas antigas caso o usuário tenha trocado de aba.
-    if(thisRequest!==requestId || requestedPeriod!==period) return;
+    if(thisRequest!==requestId) return;
 
     if(!d.ok) throw Error(d.error || 'Falha ao carregar ranking');
     render(d);
@@ -424,28 +379,12 @@ function render(d){
     : '';
 }
 
-function setPeriod(p){
-  period=p;
-  $('#yearPrize').hidden=p!=='year';
-  ['today','month','quarter','semester','year'].forEach(id=>{
-    $('#'+id).classList.toggle('on',p===id);
-  });
-  setDateLabel();
-  load();
-}
 
-$('#today').onclick=()=>setPeriod('today');
-$('#month').onclick=()=>setPeriod('month');
-$('#quarter').onclick=()=>setPeriod('quarter');
-$('#semester').onclick=()=>setPeriod('semester');
-$('#year').onclick=()=>setPeriod('year');
-
-$('#yearPrize').hidden=period!=='year';
 setDateLabel();
 load();
 
 // Mantém exatamente o comportamento já validado: HOJE atualiza a cada 60 segundos.
-setInterval(()=>{ if(period==='today') load(); },60000);
+setInterval(load,60000);
 </script>
 </body>
 </html>
