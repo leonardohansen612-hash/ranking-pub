@@ -7,7 +7,9 @@ function headers(token, mode = "raw") {
   };
 }
 
-async function saipos(path, params = {}) {
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function saipos(path, params = {}, { retries = 3, timeoutMs = 45000 } = {}) {
   const token = process.env.SAIPOS_API_TOKEN;
   if (!token) throw new Error("SAIPOS_API_TOKEN não configurado.");
 
@@ -19,25 +21,72 @@ async function saipos(path, params = {}) {
   }
 
   const mode = process.env.SAIPOS_AUTH_MODE || "raw";
-  let r = await fetch(url, { headers: headers(token, mode) });
+  let lastError;
 
-  if (r.status === 401 && mode === "raw") {
-    r = await fetch(url, { headers: headers(token, "bearer") });
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      let r = await fetch(url, {
+        headers: headers(token, mode),
+        signal: controller.signal
+      });
+
+      if (r.status === 401 && mode === "raw") {
+        r = await fetch(url, {
+          headers: headers(token, "bearer"),
+          signal: controller.signal
+        });
+      }
+
+      const text = await r.text();
+      let body;
+      try { body = JSON.parse(text); } catch { body = text; }
+
+      if (r.ok) {
+        return Array.isArray(body)
+          ? body
+          : (body?.data || body?.items || body?.results || body?.records || body?.result || []);
+      }
+
+      const msg = `Saipos ${r.status}: ${
+        typeof body === "string"
+          ? body.slice(0, 500)
+          : JSON.stringify(body).slice(0, 500)
+      }`;
+
+      const retryable =
+        r.status === 504 ||
+        body?.code === "PGRST003" ||
+        /Timed out|timeout/i.test(msg);
+
+      if (retryable && attempt < retries) {
+        lastError = new Error(msg);
+        await wait(1200 * attempt);
+        continue;
+      }
+
+      throw new Error(msg);
+    } catch (e) {
+      lastError = e;
+
+      const retryable =
+        e?.name === "AbortError" ||
+        /504|PGRST003|Timed out|timeout/i.test(String(e?.message || e));
+
+      if (retryable && attempt < retries) {
+        await wait(1200 * attempt);
+        continue;
+      }
+
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
-  const text = await r.text();
-  let body;
-  try { body = JSON.parse(text); } catch { body = text; }
-
-  if (!r.ok) {
-    throw new Error(
-      `Saipos ${r.status}: ${typeof body === "string" ? body.slice(0, 500) : JSON.stringify(body).slice(0, 500)}`
-    );
-  }
-
-  return Array.isArray(body)
-    ? body
-    : (body?.data || body?.items || body?.results || body?.records || body?.result || []);
+  throw lastError || new Error("Falha ao consultar Saipos.");
 }
 
 function spParts(d = new Date()) {
@@ -99,33 +148,48 @@ function isBeer(name) {
   return BEERS.some(k => n.includes(k));
 }
 
-function hourKey(createdAt) {
-  const s = String(createdAt || "");
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})T?(\d{2})/);
-  return m ? `${m[1]}|${m[2]}` : null;
+function parseCreatedAt(createdAt) {
+  const m = String(createdAt || "").match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/
+  );
+  if (!m) return null;
+
+  return {
+    y: Number(m[1]),
+    mo: Number(m[2]),
+    d: Number(m[3]),
+    h: Number(m[4]),
+    mi: Number(m[5]),
+    s: Number(m[6])
+  };
 }
 
-async function fetchItemsForHour(date, hour) {
-  const start = `${date} ${hour}:00:00`;
-  const end = `${date} ${hour}:59:59`;
-  const all = [];
-  let offset = 0;
-  const limit = 250;
+function localTimestampFromParts(parts, deltaMinutes = 0) {
+  // Usa UTC apenas como calculadora de calendário, mantendo os números locais.
+  const dt = new Date(Date.UTC(
+    parts.y, parts.mo - 1, parts.d, parts.h, parts.mi + deltaMinutes, parts.s
+  ));
 
-  for (let page = 0; page < 10; page++) {
-    const batch = await saipos("/sales_items", {
-      p_date_column_filter: "created_at",
-      p_filter_date_start: start,
-      p_filter_date_end: end,
-      p_limit: limit,
-      p_offset: offset
-    });
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())} ` +
+         `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:${pad(dt.getUTCSeconds())}`;
+}
 
-    all.push(...batch);
-    if (batch.length < limit) break;
-    offset += limit;
-  }
-  return all;
+async function fetchItemsForSale(createdAt) {
+  const parts = parseCreatedAt(createdAt);
+  if (!parts) return [];
+
+  // Janela curta: 2 min antes a 8 min depois da criação.
+  const start = localTimestampFromParts(parts, -2);
+  const end = localTimestampFromParts(parts, 8);
+
+  return saipos("/sales_items", {
+    p_date_column_filter: "created_at",
+    p_filter_date_start: start,
+    p_filter_date_end: end,
+    p_limit: 300,
+    p_offset: 0
+  }, { retries: 3, timeoutMs: 45000 });
 }
 
 export default async function handler(req, res) {
@@ -140,25 +204,19 @@ export default async function handler(req, res) {
       p_filter_date_end: spTimestamp(now),
       p_limit: 100,
       p_offset: 0
-    });
+    }, { retries: 3, timeoutMs: 45000 });
 
-    const activeSales = sales.filter(s => !["Y", "S", true, 1, "1"].includes(s?.canceled));
-    const ids = new Set(activeSales.map(saleId).filter(Boolean));
+    const activeSales = sales.filter(
+      s => !["Y", "S", true, 1, "1"].includes(s?.canceled)
+    );
 
-    const hourKeys = [...new Set(activeSales.map(s => hourKey(s?.created_at)).filter(Boolean))];
+    const changed = [];
 
-    const groups = [];
-    for (const key of hourKeys) {
-      const [date, hour] = key.split("|");
-      const hourGroups = await fetchItemsForHour(date, hour);
-      groups.push(...hourGroups.filter(g => ids.has(saleId(g))));
-    }
+    for (const sale of activeSales) {
+      const sid = saleId(sale);
+      const groups = await fetchItemsForSale(sale?.created_at);
 
-    const groupBySale = new Map(groups.map(g => [saleId(g), g]));
-
-    const changed = activeSales.map(sale => {
-      const id = saleId(sale);
-      const group = groupBySale.get(id);
+      const group = groups.find(g => saleId(g) === sid);
       const items = Array.isArray(group?.items) ? group.items : [];
 
       const beers = [];
@@ -166,29 +224,32 @@ export default async function handler(req, res) {
 
       for (const item of items) {
         if (canceledItem(item)) continue;
+
         const name = itemName(item);
         if (!isBeer(name)) continue;
+
         const q = qty(item);
         if (q <= 0) continue;
+
         cups += q;
         beers.push({ name, quantity: q });
       }
 
-      return {
-        id_sale: id,
+      changed.push({
+        id_sale: sid,
         customer: String(sale?.desc_sale || "").trim() || "Não identificado",
         created_at: sale?.created_at ?? null,
         updated_at: sale?.updated_at ?? null,
         cups,
         beers
-      };
-    });
+      });
+    }
 
     res.setHeader("Cache-Control", "no-store");
 
     return res.status(200).json({
       ok: true,
-      test: "incremental-items",
+      test: "incremental-items-v4",
       window: {
         start: spTimestamp(start),
         end: spTimestamp(now),
@@ -200,7 +261,7 @@ export default async function handler(req, res) {
   } catch (e) {
     return res.status(500).json({
       ok: false,
-      test: "incremental-items",
+      test: "incremental-items-v4",
       error: e?.message || String(e)
     });
   }
