@@ -6,8 +6,11 @@ import {
   getItemName,
   getQty,
   customerFor,
-  isBeer
+  isBeer,
+  hourWindow
 } from './_saipos.js';
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function mapLimit(values, limit, worker) {
   const out = new Array(values.length);
@@ -27,17 +30,54 @@ async function mapLimit(values, limit, worker) {
   return out;
 }
 
-export async function fetchAndAggregateDate(date) {
-  // Cada comanda pertence ao dia em que foi aberta (created_at).
-  // O DIA consulta o dia civil completo: 00:00 até 23:59.
-  const start = 0;
-  const end = 23;
-  const hours=[];
-  for(let h=start; h<=end; h++) hours.push(h);
+function saoPauloParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone:'America/Sao_Paulo',
+    year:'numeric',
+    month:'2-digit',
+    day:'2-digit',
+    hour:'2-digit',
+    hourCycle:'h23'
+  }).formatToParts(new Date());
 
+  return Object.fromEntries(parts.map(p => [p.type,p.value]));
+}
+
+export async function fetchAndAggregateDate(date) {
+  // Regra oficial: a comanda pertence ao dia em que foi aberta (created_at).
+  //
+  // IMPORTANTE:
+  // Voltamos à janela operacional e, no dia atual, nunca consultamos
+  // horas futuras. Isso reduz fortemente 429/504 da Saipos.
+  const configured = hourWindow();
+  const now = saoPauloParts();
+  const realToday = `${now.year}-${now.month}-${now.day}`;
+
+  const start = configured.start;
+  let end = configured.end;
+
+  if (date === realToday) {
+    end = Math.min(end, Number(now.hour));
+  } else if (date > realToday) {
+    end = start - 1;
+  }
+
+  const hours = [];
+  for (let h=start; h<=end; h++) hours.push(h);
+
+  if (!hours.length) {
+    return aggregate({
+      date,
+      sales:[],
+      itemGroups:[],
+      warnings:[]
+    });
+  }
+
+  // Uma chamada por vez por padrão para não estourar o rate limit.
   const concurrency = Math.max(
     1,
-    Math.min(4, Number(process.env.SAIPOS_CONCURRENCY || 2))
+    Math.min(2, Number(process.env.SAIPOS_CONCURRENCY || 1))
   );
 
   const warnings=[];
@@ -45,28 +85,33 @@ export async function fetchAndAggregateDate(date) {
   const chunks = await mapLimit(hours, concurrency, async hour => {
     let lastError = null;
 
-    // Retry simples para 429/504 e oscilações temporárias.
-    for (let attempt=1; attempt<=3; attempt++) {
+    // Duas tentativas são suficientes para oscilações temporárias,
+    // sem multiplicar demais as chamadas em caso de 429/504.
+    for (let attempt=1; attempt<=2; attempt++) {
       try {
         const sales = await fetchHour('/search_sales', date, hour);
+
+        // Pequeno respiro entre os dois endpoints da mesma hora.
+        await sleep(250);
+
         const itemGroups = await fetchHour('/sales_items', date, hour);
         return {hour,sales,itemGroups};
       } catch(e) {
         lastError = e;
-        if (attempt < 3) {
-          await new Promise(r => setTimeout(r, attempt * 800));
-        }
+        if (attempt < 2) await sleep(1200);
       }
     }
 
     warnings.push(
       `${date} ${String(hour).padStart(2,'0')}h: ${lastError?.message || 'Falha Saipos'}`
     );
+
     return {hour,sales:[],itemGroups:[]};
   });
 
   const sales=[];
   const itemGroups=[];
+
   for(const c of chunks) {
     sales.push(...c.sales);
     itemGroups.push(...c.itemGroups);
@@ -149,6 +194,7 @@ export function mergeSnapshots(docs) {
 
   for(const doc of docs) {
     if (!Array.isArray(doc.ranking)) continue;
+
     stats.days += 1;
     stats.sales += Number(doc.stats?.sales || 0);
     stats.saleGroups += Number(doc.stats?.saleGroups || 0);
