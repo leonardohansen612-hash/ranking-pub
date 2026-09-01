@@ -28,27 +28,39 @@ async function mapLimit(values, limit, worker) {
   return out;
 }
 
-export async function fetchAndAggregateDate(date) {
-  // O ranking diário considera o dia civil completo em São Paulo:
-  // 00:00 até 23:59. Antes, hourWindow() limitava a consulta ao
-  // período operacional do pub e fazia lançamentos após a meia-noite
-  // desaparecerem do DIA.
-  const start = 0;
-  const end = 23;
-  const hours=[];
-  for(let h=start; h<=end; h++) hours.push(h);
 
-  const concurrency = Math.max(
-    1,
-    Math.min(4, Number(process.env.SAIPOS_CONCURRENCY || 2))
+function previousDate(date) {
+  const [y,m,d] = String(date).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return dt.toISOString().slice(0,10);
+}
+
+function saoPauloHour() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone:'America/Sao_Paulo',
+    hour:'2-digit',
+    hour12:false
+  }).formatToParts(new Date());
+
+  const hour = Number(parts.find(p => p.type === 'hour')?.value || 0);
+  return hour === 24 ? 0 : hour;
+}
+
+function saleUpdatedOnDate(sale, date) {
+  const raw = String(
+    sale?.updated_at ??
+    sale?.updatedAt ??
+    sale?.date_updated ??
+    ''
   );
+  return raw.startsWith(date);
+}
 
-  const warnings=[];
-
-  const chunks = await mapLimit(hours, concurrency, async hour => {
+async function fetchHoursForDate(date, hours, concurrency, warnings, label='') {
+  return mapLimit(hours, concurrency, async hour => {
     let lastError = null;
 
-    // Retry simples para 429/504 e oscilações temporárias.
     for (let attempt=1; attempt<=3; attempt++) {
       try {
         const sales = await fetchHour('/search_sales', date, hour);
@@ -63,16 +75,116 @@ export async function fetchAndAggregateDate(date) {
     }
 
     warnings.push(
-      `${date} ${String(hour).padStart(2,'0')}h: ${lastError?.message || 'Falha Saipos'}`
+      `${label}${date} ${String(hour).padStart(2,'0')}h: ${lastError?.message || 'Falha Saipos'}`
     );
     return {hour,sales:[],itemGroups:[]};
   });
+}
+
+export async function fetchAndAggregateDate(date) {
+  const {start,end} = hourWindow();
+  const hours=[];
+  for(let h=start; h<=end; h++) hours.push(h);
+
+  const concurrency = Math.max(
+    1,
+    Math.min(4, Number(process.env.SAIPOS_CONCURRENCY || 2))
+  );
+
+  const warnings=[];
+
+  // Fluxo normal: vendas criadas na data consultada.
+  const chunks = await fetchHoursForDate(
+    date,
+    hours,
+    concurrency,
+    warnings
+  );
 
   const sales=[];
   const itemGroups=[];
+
   for(const c of chunks) {
     sales.push(...c.sales);
     itemGroups.push(...c.itemGroups);
+  }
+
+  /*
+   * VIRADA DA MEIA-NOITE
+   *
+   * Até o horário de corte, também olhamos algumas horas do dia anterior.
+   * Porém só carregamos vendas cujo updated_at já pertence ao dia atual.
+   *
+   * Isso resolve a situação de uma comanda aberta antes da meia-noite que
+   * continua recebendo lançamentos depois da meia-noite, sem depender de
+   * pesquisar a Saipos diretamente por updated_at (consulta que se mostrou
+   * muito instável).
+   *
+   * Depois do corte, o DIA volta a considerar somente vendas criadas hoje.
+   * Assim a comanda da noite anterior não permanece no ranking durante o
+   * restante do novo dia.
+   */
+  const carryoverCutoff = Math.max(
+    0,
+    Math.min(12, Number(process.env.SAIPOS_CARRYOVER_CUTOFF_HOUR || 6))
+  );
+
+  const carryoverStart = Math.max(
+    0,
+    Math.min(23, Number(process.env.SAIPOS_CARRYOVER_START_HOUR || 20))
+  );
+
+  const isRealToday = date === saoPauloToday();
+  const inCarryoverWindow = saoPauloHour() < carryoverCutoff;
+
+  if (isRealToday && inCarryoverWindow) {
+    const prev = previousDate(date);
+    const prevHours=[];
+    for(let h=carryoverStart; h<=23; h++) prevHours.push(h);
+
+    const prevChunks = await fetchHoursForDate(
+      prev,
+      prevHours,
+      concurrency,
+      warnings,
+      'virada '
+    );
+
+    const carrySales = [];
+    const carryIds = new Set();
+
+    for(const c of prevChunks) {
+      for(const sale of c.sales) {
+        const id = getSaleId(sale);
+        if (!id || saleCanceled(sale)) continue;
+        if (!saleUpdatedOnDate(sale, date)) continue;
+
+        carrySales.push(sale);
+        carryIds.add(id);
+      }
+    }
+
+    if (carryIds.size) {
+      const seenSales = new Set(sales.map(getSaleId).filter(Boolean));
+      const seenGroups = new Set(itemGroups.map(getSaleId).filter(Boolean));
+
+      for(const sale of carrySales) {
+        const id = getSaleId(sale);
+        if (!seenSales.has(id)) {
+          sales.push(sale);
+          seenSales.add(id);
+        }
+      }
+
+      for(const c of prevChunks) {
+        for(const group of c.itemGroups) {
+          const id = getSaleId(group);
+          if (!id || !carryIds.has(id) || seenGroups.has(id)) continue;
+          itemGroups.push(group);
+          seenGroups.add(id);
+        }
+      }
+    }
   }
 
   return aggregate({date,sales,itemGroups,warnings});
