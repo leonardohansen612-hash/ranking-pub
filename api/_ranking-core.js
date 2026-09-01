@@ -29,7 +29,12 @@ async function mapLimit(values, limit, worker) {
 }
 
 export async function fetchAndAggregateDate(date) {
-  const {start,end} = hourWindow();
+  // O ranking diário considera o dia civil completo em São Paulo:
+  // 00:00 até 23:59. Antes, hourWindow() limitava a consulta ao
+  // período operacional do pub e fazia lançamentos após a meia-noite
+  // desaparecerem do DIA.
+  const start = 0;
+  const end = 23;
   const hours=[];
   for(let h=start; h<=end; h++) hours.push(h);
 
