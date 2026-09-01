@@ -1,0 +1,137 @@
+name: Teste Incremental Saipos
+
+"on":
+  workflow_dispatch: {}
+
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Consultar vendas alteradas no último minuto
+        env:
+          SAIPOS_API_TOKEN: ${{ secrets.SAIPOS_API_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os, json, urllib.parse, urllib.request
+          from datetime import datetime, timedelta, timezone
+
+          token = os.environ["SAIPOS_API_TOKEN"]
+
+          sp = timezone(timedelta(hours=-3))
+          end = datetime.now(sp)
+          start = end - timedelta(minutes=1)
+
+          def fmt(dt):
+              return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+          params = {
+              "p_date_column_filter": "updated_at",
+              "p_filter_date_start": fmt(start),
+              "p_filter_date_end": fmt(end),
+              "p_limit": "100",
+              "p_offset": "0",
+          }
+
+          url = "https://data.saipos.io/v1/search_sales?" + urllib.parse.urlencode(params)
+          req = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": token,
+                  "accept": "application/json",
+              },
+          )
+
+          with urllib.request.urlopen(req, timeout=90) as r:
+              sales = json.load(r)
+
+          print("JANELA:", fmt(start), "até", fmt(end))
+          print("VENDAS ALTERADAS:", len(sales))
+
+          if not sales:
+              print("Nenhuma venda alterada no último minuto.")
+              raise SystemExit(0)
+
+          ids = [str(s.get("id_sale")) for s in sales if s.get("id_sale")]
+          wanted = set(ids)
+
+          # Descobre as horas de criação das vendas alteradas
+          hours = set()
+          for s in sales:
+              created = s.get("created_at")
+              if created and len(created) >= 13:
+                  hours.add((created[:10], created[11:13]))
+
+          groups = []
+          for date, hour in sorted(hours):
+              iparams = {
+                  "p_date_column_filter": "created_at",
+                  "p_filter_date_start": f"{date} {hour}:00:00",
+                  "p_filter_date_end": f"{date} {hour}:59:59",
+                  "p_limit": "300",
+                  "p_offset": "0",
+              }
+              iurl = "https://data.saipos.io/v1/sales_items?" + urllib.parse.urlencode(iparams)
+              ireq = urllib.request.Request(
+                  iurl,
+                  headers={
+                      "Authorization": token,
+                      "accept": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(ireq, timeout=90) as r:
+                  data = json.load(r)
+                  if isinstance(data, list):
+                      groups.extend(data)
+
+          by_sale = {}
+          for g in groups:
+              sid = str(g.get("id_sale", ""))
+              if sid in wanted:
+                  by_sale[sid] = g
+
+          beers = [
+              "pilsen","hoplager","witbier","bitterzinha","ybá","yba",
+              "ipa zero","american ipa","textreme","english porter",
+              "maria manuela","maria manoela","milkshake neipa",
+              "session ipa","sunrise","winner blond","pilsen caju"
+          ]
+
+          for s in sales:
+              sid = str(s.get("id_sale", ""))
+              name = s.get("desc_sale") or "Não identificado"
+              g = by_sale.get(sid, {})
+              items = g.get("items") or []
+
+              cups = 0
+              matched = []
+              for item in items:
+                  deleted = item.get("deleted")
+                  if deleted in ("Y","S",True,1,"1"):
+                      continue
+
+                  item_name = str(
+                      item.get("desc_sale_item")
+                      or item.get("desc_store_item")
+                      or item.get("desc_item")
+                      or item.get("name")
+                      or ""
+                  ).strip()
+
+                  low = item_name.lower()
+                  if any(b in low for b in beers):
+                      try:
+                          q = float(item.get("quantity", 1) or 0)
+                      except:
+                          q = 0
+                      cups += q
+                      matched.append({"item": item_name, "quantity": q})
+
+              print("")
+              print("VENDA:", sid)
+              print("CLIENTE:", name)
+              print("UPDATED_AT:", s.get("updated_at"))
+              print("COPOS:", int(cups) if cups.is_integer() else cups)
+              print("CERVEJAS:", json.dumps(matched, ensure_ascii=False))
+          PY
