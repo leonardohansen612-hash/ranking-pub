@@ -1,71 +1,85 @@
-import {
-  saiposFetch,
-  rows,
-  getSaleId,
-  saleCanceled,
-  customerFor
-} from './_saipos.js';
+import { fetchHour } from './_saipos.js';
 
-function pad(n) {
-  return String(n).padStart(2, '0');
+function saoPauloNowParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(new Date());
+
+  return Object.fromEntries(parts.map(p => [p.type, p.value]));
+}
+
+function addDays(dateStr, amount) {
+  const [y,m,d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + amount));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
+}
+
+function slotFrom(date, hour) {
+  if (hour <= 23) return { date, hour };
+  return { date: addDays(date, 1), hour: hour - 24 };
+}
+
+function saleView(s) {
+  return {
+    id_sale: s?.id_sale ?? null,
+    desc_sale: s?.desc_sale ?? null,
+    created_at: s?.created_at ?? null,
+    updated_at: s?.updated_at ?? null,
+    canceled: s?.canceled ?? null,
+    status: s?.table_order?.id_table_order_status ?? null
+  };
 }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
   try {
-    const now = new Date();
+    const now = saoPauloNowParts();
+    const date = `${now.year}-${now.month}-${now.day}`;
+    const h = Number(now.hour);
 
-    // Teste proposital usando a hora UTC atual.
-    // São Paulo está em UTC-3, então por volta de 14h local este teste consulta 17h.
-    const y = now.getUTCFullYear();
-    const m = pad(now.getUTCMonth() + 1);
-    const d = pad(now.getUTCDate());
-    const h = pad(now.getUTCHours());
+    // Hora local anterior + hora atual + 4 horas à frente.
+    const rawHours = [h - 1, h, h + 1, h + 2, h + 3, h + 4]
+      .filter(x => x >= 0);
 
-    const date = `${y}-${m}-${d}`;
-    const start = `${date} ${h}:00:00`;
-    const end = `${date} ${h}:59:59`;
+    const slots = rawHours.map(x => slotFrom(date, x));
+    const results = [];
 
-    const body = await saiposFetch('/search_sales', {
-      p_date_column_filter: 'created_at',
-      p_filter_date_start: start,
-      p_filter_date_end: end,
-      p_limit: 250,
-      p_offset: 0
-    });
+    for (const slot of slots) {
+      try {
+        const sales = await fetchHour('/search_sales', slot.date, slot.hour);
 
-    const found = rows(body);
+        results.push({
+          date: slot.date,
+          hour: slot.hour,
+          count: sales.length,
+          sales: sales.map(saleView)
+        });
+      } catch (e) {
+        results.push({
+          date: slot.date,
+          hour: slot.hour,
+          error: e.message
+        });
+      }
+    }
 
-    const sales = found.map(sale => {
-      const customer = customerFor(sale);
-      return {
-        id_sale: getSaleId(sale),
-        name: customer.name,
-        canceled: saleCanceled(sale),
-        id_sale_type: sale?.id_sale_type ?? null,
-        created_at: sale?.created_at ?? null,
-        updated_at: sale?.updated_at ?? null,
-        shift_date: sale?.shift_date ?? null,
-        id_sale_status: sale?.id_sale_status ?? null,
-        desc_sale: sale?.desc_sale ?? null,
-        table_order: sale?.table_order ?? null
-      };
-    });
-
-    res.status(200).json({
+    return res.status(200).json({
       ok: true,
-      test: 'utc-current-hour-created-at',
-      filter: 'created_at',
-      window: { start, end },
-      count: sales.length,
-      sales
+      saoPauloNow: `${date} ${now.hour}:${now.minute}`,
+      note: 'Diagnóstico somente leitura. Consulta created_at por hora e não grava nada.',
+      results
     });
-  } catch (err) {
-    res.status(500).json({
+  } catch (e) {
+    return res.status(500).json({
       ok: false,
-      test: 'utc-current-hour-created-at',
-      error: String(err?.message || err)
+      error: e.message
     });
   }
 }
