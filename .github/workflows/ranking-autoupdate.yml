@@ -1,1 +1,19 @@
+name: Atualizar Ranking do Copo
 
+on:
+  schedule:
+    # A cada 15 minutos, diariamente, entre 17:00 e 02:59 UTC.
+    # Em São Paulo (UTC-3): aproximadamente 14:00 até 23:59.
+    - cron: "*/15 17-23 * * *"
+    - cron: "*/15 0-2 * * *"
+  workflow_dispatch:
+
+jobs:
+  atualizar-ranking:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Atualizar HOJE e salvar snapshot no Firestore
+        run: |
+          curl --fail --silent --show-error             --retry 2             --retry-delay 5             --max-time 90             "https://ranking-pub-wmas.vercel.app/api/ranking?period=today"             > /dev/null
