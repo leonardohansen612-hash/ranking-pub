@@ -14,7 +14,32 @@ export default async function handler(req,res) {
     ? req.query.period
     : 'today';
 
-  const today = saoPauloToday();
+  const realToday = saoPauloToday();
+
+  // Permite simular outra data somente com a SETUP_KEY.
+  // Sem date/key, o comportamento normal continua exatamente igual.
+  const requestedDate = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+  const validDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate);
+  const setupKey = process.env.SETUP_KEY || '';
+  const canOverrideDate = Boolean(requestedDate) && validDate && setupKey && req.query.key === setupKey;
+
+  if (requestedDate && !validDate) {
+    return res.status(400).json({
+      ok:false,
+      period,
+      error:'Data inválida. Use YYYY-MM-DD.'
+    });
+  }
+
+  if (requestedDate && !canOverrideDate) {
+    return res.status(403).json({
+      ok:false,
+      period,
+      error:'Data de teste exige SETUP_KEY válida.'
+    });
+  }
+
+  const today = canOverrideDate ? requestedDate : realToday;
 
   try {
     if (period === 'today') {
@@ -41,6 +66,8 @@ export default async function handler(req,res) {
       return res.status(200).json({
         ok:true,
         period:'today',
+        date:today,
+        simulatedDate:canOverrideDate,
         updatedAt:new Date().toISOString(),
         ranking:data.ranking,
         stats:data.stats,
