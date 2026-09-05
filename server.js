@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import rankingHandler from './api/ranking.js';
 import saiposDiagnosticoHandler from './api/saipos-diagnostico.js';
+import { saiposWebhookPost, saiposWebhookStatus } from './api/saipos-webhook.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,13 +12,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Webhook Saipos: captura diagnostica em tempo real.
+app.post('/api/saipos-webhook', saiposWebhookPost);
+app.get('/api/saipos-webhook', saiposWebhookStatus);
 
 // API do Ranking do Copo
 app.get('/api/ranking', rankingHandler);
 
-// Diagnóstico temporário da Saipos — somente leitura, não altera ranking/Firebase.
+// Diagnóstico temporário da Data API Saipos
 app.get('/api/saipos-diagnostico', saiposDiagnosticoHandler);
 
 // Healthcheck
