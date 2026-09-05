@@ -154,6 +154,8 @@ export async function saveDailySnapshotMonotonic(date, fresh) {
         saleGroups: Math.max(num(previous?.stats?.saleGroups), num(fresh?.stats?.saleGroups)),
         matchedItems: Math.max(num(previous?.stats?.matchedItems), num(fresh?.stats?.matchedItems)),
         beerCups: Math.max(num(previous?.stats?.beerCups), num(fresh?.stats?.beerCups)),
+        unmatchedGroups: num(fresh?.stats?.unmatchedGroups),
+        unmatchedBeerCups: num(fresh?.stats?.unmatchedBeerCups),
         days: 1
       },
       warnings: fresh?.warnings || [],
