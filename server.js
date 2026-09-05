@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import rankingHandler from './api/ranking.js';
 import saiposDiagnosticoHandler from './api/saipos-diagnostico.js';
 import saiposCatalogoHml from './api/saipos-catalogo-hml.js';
+import saiposAuthDiagnostico from './api/saipos-auth-diagnostico.js';
 import { saiposWebhookPost, saiposWebhookStatus } from './api/saipos-webhook.js';
 
 const app = express();
@@ -28,6 +29,9 @@ app.get('/api/saipos-diagnostico', saiposDiagnosticoHandler);
 
 // Catálogo da loja HML da API de Pedidos (somente leitura)
 app.get('/api/saipos-catalogo-hml', saiposCatalogoHml);
+
+// Diagnóstico isolado da autenticação da Order API
+app.get('/api/saipos-auth-diagnostico', saiposAuthDiagnostico);
 
 // Healthcheck
 app.get('/health', (_req, res) => {
