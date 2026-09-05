@@ -27,6 +27,8 @@ function aggregate(day) {
   let beerCups = 0;
   let unmatchedGroups = 0;
   let unmatchedBeerCups = 0;
+  let unidentifiedBeerCups = 0;
+  let unidentifiedSales = new Set();
 
   for (const group of day.itemGroups) {
     const saleId = getSaleId(group);
@@ -61,6 +63,10 @@ function aggregate(day) {
 
       matchedItems++;
       beerCups += qty;
+      if (customer.name === 'Consumidor não identificado') {
+        unidentifiedBeerCups += qty;
+        if (saleId) unidentifiedSales.add(saleId);
+      }
 
       const cur = rank.get(customer.key) || {
         key: customer.key,
@@ -86,6 +92,8 @@ function aggregate(day) {
       beerCups,
       unmatchedGroups,
       unmatchedBeerCups,
+      unidentifiedBeerCups,
+      unidentifiedSales: unidentifiedSales.size,
       days:1
     },
     warnings:day.warnings || []

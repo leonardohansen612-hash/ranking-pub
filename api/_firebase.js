@@ -135,7 +135,7 @@ export async function saveDailySnapshotMonotonic(date, fresh) {
   const firestore = db();
   const ref = firestore.collection('ranking_daily').doc(date);
   const nowIso = new Date().toISOString();
-  const SNAPSHOT_VERSION = 2;
+  const SNAPSHOT_VERSION = 3;
 
   return firestore.runTransaction(async tx => {
     const snap = await tx.get(ref);
@@ -180,6 +180,8 @@ export async function saveDailySnapshotMonotonic(date, fresh) {
         beerCups: num(chosenStats.beerCups || (acceptFresh ? freshCups : previousCups)),
         unmatchedGroups: num(chosenStats.unmatchedGroups),
         unmatchedBeerCups: num(chosenStats.unmatchedBeerCups),
+        unidentifiedBeerCups: num(chosenStats.unidentifiedBeerCups),
+        unidentifiedSales: num(chosenStats.unidentifiedSales),
         days: 1
       },
       warnings: acceptFresh ? (fresh?.warnings || []) : (previous?.warnings || []),

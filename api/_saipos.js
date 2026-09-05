@@ -15,257 +15,189 @@ async function requestJson(path, params) {
 
   const url = new URL(BASE + path);
   for (const [k,v] of Object.entries(params || {})) {
-    if (v !== undefined && v !== null && v !== '') {
-      url.searchParams.set(k, String(v));
-    }
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
   const configuredMode = process.env.SAIPOS_AUTH_MODE || 'raw';
   const delays = [0, 2000, 5000, 10000];
   let lastError = null;
 
-  for (let attempt = 0; attempt < delays.length; attempt++) {
+  for (let attempt=0; attempt<delays.length; attempt++) {
     if (delays[attempt]) await sleep(delays[attempt]);
-
     try {
       let mode = configuredMode;
       let r = await fetch(url, { headers: authHeaders(token, mode) });
-
       if (r.status === 401 && mode === 'raw') {
         mode = 'bearer';
         r = await fetch(url, { headers: authHeaders(token, mode) });
       }
-
       const text = await r.text();
-
       if (r.ok) {
-        try {
-          return JSON.parse(text);
-        } catch {
-          throw new Error(`Saipos ${path} respondeu conteúdo inválido.`);
-        }
+        try { return JSON.parse(text); }
+        catch { throw new Error(`Saipos ${path} respondeu conteúdo inválido.`); }
       }
-
-      const err = new Error(`Saipos ${path} respondeu HTTP ${r.status}: ${text.slice(0, 220)}`);
+      const err = new Error(`Saipos ${path} respondeu HTTP ${r.status}: ${text.slice(0,220)}`);
       err.status = r.status;
-      err.detail = text.slice(0, 500);
       lastError = err;
-
-      // Erros transitórios da Saipos: tenta novamente com espera crescente.
-      if (![429, 500, 502, 503, 504].includes(r.status)) throw err;
+      if (![429,500,502,503,504].includes(r.status)) throw err;
     } catch (e) {
       lastError = e;
-      if (e?.status && ![429, 500, 502, 503, 504].includes(e.status)) throw e;
+      if (e?.status && ![429,500,502,503,504].includes(e.status)) throw e;
     }
   }
-
   throw lastError || new Error(`Falha ao consultar ${path} na Saipos.`);
 }
 
 function unwrapList(json) {
   if (Array.isArray(json)) return json;
   if (!json || typeof json !== 'object') return [];
-
-  const preferred = [
-    'data','results','result','records','rows',
-    'sales','sale_items','sales_items'
-  ];
-
-  for (const key of preferred) {
+  for (const key of ['data','results','result','records','rows','sales','sale_items','sales_items','items']) {
     if (Array.isArray(json[key])) return json[key];
   }
-
-  // Alguns endpoints devolvem um envelope com uma única chave contendo o array.
-  for (const value of Object.values(json)) {
-    if (Array.isArray(value)) return value;
-  }
-
+  for (const value of Object.values(json)) if (Array.isArray(value)) return value;
   return [];
 }
 
 async function fetchAll(path, date) {
-  const start = `${date}T00:00:00`;
-  const end   = `${date}T23:59:59`;
+  // A documentação da Saipos define estes filtros como date-time. Mantemos o
+  // turno (shift_date) e o formato com espaço usado nos exemplos oficiais.
+  const start = `${date} 00:00:00`;
+  const end   = `${date} 23:59:59`;
+  const out=[];
+  const limit=1000;
 
-  const out = [];
-  const limit = 1000;
-
-  for (let offset=0; offset<10000; offset += limit) {
+  for (let offset=0; offset<10000; offset+=limit) {
     const json = await requestJson(path, {
-      p_date_column_filter: 'shift_date',
-      p_filter_date_start: start,
-      p_filter_date_end: end,
-      p_limit: limit,
-      p_offset: offset
+      p_date_column_filter:'shift_date',
+      p_filter_date_start:start,
+      p_filter_date_end:end,
+      p_limit:limit,
+      p_offset:offset
     });
-
     const rows = unwrapList(json);
     out.push(...rows);
-
     if (rows.length < limit) break;
   }
-
   return out;
 }
 
 export async function fetchDay(date) {
-  // A Saipos apresentou timeout de pool (PGRST003/504) quando recebia consultas
-  // simultâneas. Fazemos as duas leituras em sequência para reduzir a pressão.
-  const warnings = [];
-  let sales = [];
-  let itemGroups = [];
+  // Sequencial para reduzir os 504/PGRST003 observados na Saipos.
+  const sales = await fetchAll('/search_sales', date);
+  const itemGroups = await fetchAll('/sales_items', date);
+  return { sales, itemGroups, warnings:[] };
+}
 
-  try {
-    sales = await fetchAll('/search_sales', date);
-  } catch (e) {
-    warnings.push(`search_sales: ${e?.message || 'falha'}`);
+function first(obj, paths) {
+  for (const path of paths) {
+    let v=obj;
+    for (const k of path.split('.')) v=v?.[k];
+    if (v !== undefined && v !== null && v !== '') return v;
   }
-
-  try {
-    itemGroups = await fetchAll('/sales_items', date);
-  } catch (e) {
-    warnings.push(`sales_items: ${e?.message || 'falha'}`);
-  }
-
-  // Precisamos dos dois lados para associar cada copo ao cliente correto.
-  // Em caso de falha, o ranking.js mantém o último snapshot válido no Firestore.
-  if (warnings.length) {
-    const e = new Error(warnings.join(' | '));
-    e.partial = { sales, itemGroups, warnings };
-    throw e;
-  }
-
-  return { sales, itemGroups, warnings };
+  return undefined;
 }
 
 export function getSaleId(obj) {
-  const raw =
-    obj?.id_sale ??
-    obj?.sale_id ??
-    obj?.idSale ??
-    obj?.sale?.id_sale ??
-    obj?.sale?.id;
-
+  const raw = first(obj, ['id_sale','sale.id_sale','sale_id','idSale','sale.id']);
   return raw === undefined || raw === null ? null : String(raw);
 }
 
 export function saleCanceled(sale) {
-  const v = sale?.canceled ?? sale?.cancelled ?? sale?.deleted;
-  return v === true || v === 1 || String(v || '').toUpperCase() === 'Y';
+  const v = first(sale,['canceled','cancelled','is_canceled','is_cancelled','deleted']);
+  return ['Y','S',true,1,'1'].includes(v);
 }
 
 export function itemCanceled(item) {
-  const v = item?.canceled ?? item?.cancelled ?? item?.deleted;
-  return v === true || v === 1 || String(v || '').toUpperCase() === 'Y';
+  const v = first(item,['canceled','cancelled','is_canceled','is_cancelled','deleted']);
+  return ['Y','S',true,1,'1'].includes(v);
 }
 
 export function getItemName(item) {
-  return String(
-    item?.desc_sale_item ??
-    item?.desc_store_item ??
-    item?.item_name ??
-    item?.sale_item_name ??
-    item?.product_name ??
-    item?.description ??
-    item?.name ??
-    ''
-  ).trim();
+  return String(first(item,[
+    'desc_sale_item','desc_store_item','desc_item','item_name','sale_item_name',
+    'product_name','description','name','item.desc_store_item','item.desc_item',
+    'item.name','store_item.desc_store_item','product.name'
+  ]) ?? '').trim();
 }
 
 export function getQty(item) {
-  const n = Number(
-    item?.quantity ??
-    item?.qty ??
-    item?.amount ??
-    item?.item_quantity ??
-    0
-  );
+  const n = Number(first(item,['quantity','qty','count','quantity_item','item_quantity','amount']) ?? 0);
   return Number.isFinite(n) ? n : 0;
 }
 
-function normalizeName(name) {
-  return String(name || '')
+function displayName(value) {
+  return String(value ?? '').trim().replace(/\s+/g,' ');
+}
+
+function comparable(value) {
+  return displayName(value)
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g,'')
-    .trim()
-    .replace(/\s+/g,' ');
+    .toLowerCase();
+}
+
+function isGenericName(value) {
+  const n = comparable(value);
+  return !n || n === 'consumidor nao identificado' || n === 'nao identificado' ||
+    n.includes('consumidor nao identificado');
 }
 
 export function customerFor(sale) {
-  const rawCustomerName = normalizeName(
-    sale?.customer?.name ??
-    sale?.customer_name ??
-    sale?.name_customer ??
-    sale?.desc_customer ??
-    ''
-  );
+  const saleType = Number(sale?.id_sale_type || 0);
+  const descSale = displayName(sale?.desc_sale);
+  const customerName = displayName(first(sale,[
+    'customer.name','customer_name','name_customer','desc_customer'
+  ]));
+  const customerId = first(sale,['customer.id_customer','id_customer']);
 
-  // Para vendas de salão/comanda, a Saipos pode trazer o objeto customer
-  // como "Consumidor não identificado" e manter o nome digitado em desc_sale.
-  const customerIsGeneric = !rawCustomerName ||
-    rawCustomerName.toLowerCase() === 'consumidor nao identificado';
+  // IMPORTANTE: para Salão (3) e Ficha (4), a própria documentação da Saipos
+  // define desc_sale como o texto de identificação da venda, normalmente o nome
+  // do cliente/posição. Portanto ele é a fonte principal nesses tipos de venda.
+  if ((saleType === 3 || saleType === 4) && descSale && !isGenericName(descSale)) {
+    return { key:`d:${comparable(descSale)}`, name:descSale };
+  }
 
-  if (!customerIsGeneric) {
-    const customerId = sale?.customer?.id_customer ?? sale?.id_customer;
+  // Nos demais tipos, ou quando desc_sale está vazio/genérico, usa o cadastro do cliente.
+  if (customerName && !isGenericName(customerName)) {
     return {
-      key: customerId ? `c:${customerId}` : `n:${rawCustomerName.toLowerCase()}`,
-      name: rawCustomerName
+      key: customerId ? `c:${customerId}` : `n:${comparable(customerName)}`,
+      name: customerName
     };
   }
 
-  const descSale = normalizeName(sale?.desc_sale ?? '');
-  if (descSale) {
-    return {
-      key: `d:${descSale.toLowerCase()}`,
-      name: descSale
-    };
+  // Fallback adicional: mesmo fora de salão/ficha, desc_sale pode carregar identificação útil.
+  if (descSale && !isGenericName(descSale)) {
+    return { key:`d:${comparable(descSale)}`, name:descSale };
   }
 
-  const card = sale?.table_order?.id_store_order_card;
+  const card = first(sale,['table_order.id_store_order_card','id_store_order_card']);
   if (card !== undefined && card !== null && card !== '') {
-    return {
-      key: `card:${card}`,
-      name: `Comanda ${card}`
-    };
+    return { key:`card:${card}`, name:`Comanda ${card}` };
   }
 
-  const table = sale?.table_order?.id_store_table;
+  const table = first(sale,['table_order.id_store_table','id_store_table']);
   if (table !== undefined && table !== null && table !== '') {
-    return {
-      key: `table:${table}`,
-      name: `Mesa ${table}`
-    };
+    return { key:`table:${table}`, name:`Mesa ${table}` };
   }
 
-  const ticket = sale?.ticket?.number;
+  const ticket = first(sale,['ticket.number','ticket_number']);
   if (ticket !== undefined && ticket !== null && ticket !== '') {
-    return {
-      key: `ticket:${ticket}`,
-      name: `Ficha ${ticket}`
-    };
+    return { key:`ticket:${ticket}`, name:`Ficha ${ticket}` };
   }
 
-  return {
-    key: `sale:${getSaleId(sale) || 'unknown'}`,
-    name: 'Consumidor não identificado'
-  };
+  return { key:`sale:${getSaleId(sale) || 'unknown'}`, name:'Consumidor não identificado' };
 }
 
-const BEERS = [
-  'pilsen',
-  'bitterzinha',
-  'hoplager',
-  'witbier',
-  'yba',
-  'ybá',
-  'ipa zero',
-  'american ipa',
-  'textreme',
-  'english porter',
-  'maria manuela'
+const DEFAULT_BEERS = [
+  'pilsen','hoplager','witbier','bitterzinha','ybá','yba','ipa zero','american ipa',
+  'textreme','english porter','maria manuela','maria manoela','milkshake neipa',
+  'session ipa','sunrise','winner blond','pilsen caju'
 ];
 
 export function isBeer(name) {
-  const n = normalizeName(name).toLowerCase();
-  return BEERS.some(b => n.includes(normalizeName(b).toLowerCase()));
+  const custom = String(process.env.BEER_KEYWORDS || '')
+    .split(',').map(x=>x.trim()).filter(Boolean);
+  const keys = custom.length ? custom : DEFAULT_BEERS;
+  const n = comparable(name);
+  return keys.some(k => n.includes(comparable(k)));
 }
