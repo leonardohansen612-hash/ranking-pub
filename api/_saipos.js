@@ -7,8 +7,6 @@ function authHeaders(token, mode='raw') {
   };
 }
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 async function requestJson(path, params) {
   const token = process.env.SAIPOS_API_TOKEN;
   if (!token) throw new Error('SAIPOS_API_TOKEN não configurado.');
@@ -20,46 +18,27 @@ async function requestJson(path, params) {
     }
   }
 
-  const configuredMode = process.env.SAIPOS_AUTH_MODE || 'raw';
-  const delays = [0, 2000, 5000, 10000];
-  let lastError = null;
+  const mode = process.env.SAIPOS_AUTH_MODE || 'raw';
+  let r = await fetch(url, { headers: authHeaders(token, mode) });
 
-  for (let attempt = 0; attempt < delays.length; attempt++) {
-    if (delays[attempt]) await sleep(delays[attempt]);
-
-    try {
-      let mode = configuredMode;
-      let r = await fetch(url, { headers: authHeaders(token, mode) });
-
-      if (r.status === 401 && mode === 'raw') {
-        mode = 'bearer';
-        r = await fetch(url, { headers: authHeaders(token, mode) });
-      }
-
-      const text = await r.text();
-
-      if (r.ok) {
-        try {
-          return JSON.parse(text);
-        } catch {
-          throw new Error(`Saipos ${path} respondeu conteúdo inválido.`);
-        }
-      }
-
-      const err = new Error(`Saipos ${path} respondeu HTTP ${r.status}: ${text.slice(0, 220)}`);
-      err.status = r.status;
-      err.detail = text.slice(0, 500);
-      lastError = err;
-
-      // Erros transitórios da Saipos: tenta novamente com espera crescente.
-      if (![429, 500, 502, 503, 504].includes(r.status)) throw err;
-    } catch (e) {
-      lastError = e;
-      if (e?.status && ![429, 500, 502, 503, 504].includes(e.status)) throw e;
-    }
+  if (r.status === 401 && mode === 'raw') {
+    r = await fetch(url, { headers: authHeaders(token, 'bearer') });
   }
 
-  throw lastError || new Error(`Falha ao consultar ${path} na Saipos.`);
+  const text = await r.text();
+
+  if (!r.ok) {
+    const err = new Error(`Saipos ${path} respondeu HTTP ${r.status}`);
+    err.status = r.status;
+    err.detail = text.slice(0, 500);
+    throw err;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Saipos ${path} respondeu conteúdo inválido.`);
+  }
 }
 
 function unwrapList(json) {
@@ -109,27 +88,26 @@ async function fetchAll(path, date) {
 }
 
 export async function fetchDay(date) {
-  // A Saipos apresentou timeout de pool (PGRST003/504) quando recebia consultas
-  // simultâneas. Fazemos as duas leituras em sequência para reduzir a pressão.
+  // Consulta independente: uma falha não apaga silenciosamente o resultado da outra.
+  const [salesResult, itemsResult] = await Promise.allSettled([
+    fetchAll('/search_sales', date),
+    fetchAll('/sales_items', date)
+  ]);
+
   const warnings = [];
-  let sales = [];
-  let itemGroups = [];
 
-  try {
-    sales = await fetchAll('/search_sales', date);
-  } catch (e) {
-    warnings.push(`search_sales: ${e?.message || 'falha'}`);
+  const sales = salesResult.status === 'fulfilled' ? salesResult.value : [];
+  const itemGroups = itemsResult.status === 'fulfilled' ? itemsResult.value : [];
+
+  if (salesResult.status === 'rejected') {
+    warnings.push(`search_sales: ${salesResult.reason?.message || 'falha'}`);
+  }
+  if (itemsResult.status === 'rejected') {
+    warnings.push(`sales_items: ${itemsResult.reason?.message || 'falha'}`);
   }
 
-  try {
-    itemGroups = await fetchAll('/sales_items', date);
-  } catch (e) {
-    warnings.push(`sales_items: ${e?.message || 'falha'}`);
-  }
-
-  // Precisamos dos dois lados para associar cada copo ao cliente correto.
-  // Em caso de falha, o ranking.js mantém o último snapshot válido no Firestore.
-  if (warnings.length) {
+  // Se um dos dois endpoints falhar, não fingimos que foi atualização válida.
+  if (salesResult.status === 'rejected' || itemsResult.status === 'rejected') {
     const e = new Error(warnings.join(' | '));
     e.partial = { sales, itemGroups, warnings };
     throw e;
@@ -192,20 +170,62 @@ function normalizeName(name) {
 }
 
 export function customerFor(sale) {
-  const customerName =
+  const rawCustomerName = normalizeName(
     sale?.customer?.name ??
     sale?.customer_name ??
     sale?.name_customer ??
     sale?.desc_customer ??
-    sale?.desc_sale ??
-    sale?.ticket?.number ??
-    sale?.table_order?.id_store_order_card ??
-    'Consumidor não identificado';
+    ''
+  );
 
-  const name = normalizeName(customerName) || 'Consumidor não identificado';
+  // A própria Saipos pode devolver customer.name = "Consumidor não identificado"
+  // mesmo quando a venda de salão/comanda possui o nome digitado em desc_sale.
+  const customerIsGeneric = !rawCustomerName ||
+    rawCustomerName.toLowerCase() === 'consumidor nao identificado';
+
+  if (!customerIsGeneric) {
+    const customerId = sale?.customer?.id_customer ?? sale?.id_customer;
+    return {
+      key: customerId ? `c:${customerId}` : `n:${rawCustomerName.toLowerCase()}`,
+      name: rawCustomerName
+    };
+  }
+
+  const descSale = normalizeName(sale?.desc_sale ?? '');
+  if (descSale) {
+    return {
+      key: `d:${descSale.toLowerCase()}`,
+      name: descSale
+    };
+  }
+
+  const card = sale?.table_order?.id_store_order_card;
+  if (card !== undefined && card !== null && card !== '') {
+    return {
+      key: `card:${card}`,
+      name: `Comanda ${card}`
+    };
+  }
+
+  const table = sale?.table_order?.id_store_table;
+  if (table !== undefined && table !== null && table !== '') {
+    return {
+      key: `table:${table}`,
+      name: `Mesa ${table}`
+    };
+  }
+
+  const ticket = sale?.ticket?.number;
+  if (ticket !== undefined && ticket !== null && ticket !== '') {
+    return {
+      key: `ticket:${ticket}`,
+      name: `Ficha ${ticket}`
+    };
+  }
+
   return {
-    key: `d:${name.toLowerCase()}`,
-    name
+    key: `sale:${getSaleId(sale) || 'unknown'}`,
+    name: 'Consumidor não identificado'
   };
 }
 
