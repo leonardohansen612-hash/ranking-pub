@@ -125,8 +125,24 @@ export function getQty(item) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function repairMojibake(value) {
+  let s = String(value ?? '');
+
+  // A Saipos pode chegar com texto UTF-8 interpretado como latin1/windows-1252
+  // (ex.: "não" vira "nÃ£o"). Se isso acontecer, reconstituímos o UTF-8
+  // antes de comparar ou exibir o nome.
+  if (/[ÃÂ]/.test(s)) {
+    try {
+      const fixed = Buffer.from(s, 'latin1').toString('utf8');
+      if (fixed && !fixed.includes('�')) s = fixed;
+    } catch {}
+  }
+
+  return s;
+}
+
 function displayName(value) {
-  return String(value ?? '').trim().replace(/\s+/g,' ');
+  return repairMojibake(value).trim().replace(/\s+/g,' ');
 }
 
 function comparable(value) {
@@ -137,9 +153,17 @@ function comparable(value) {
 }
 
 function isGenericName(value) {
-  const n = comparable(value);
-  return !n || n === 'consumidor nao identificado' || n === 'nao identificado' ||
-    n.includes('consumidor nao identificado');
+  const n = comparable(value).replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!n) return true;
+
+  // Deliberadamente tolerante a texto corrompido. O bug observado no ranking
+  // gerava "Consumidor nA£o identificado" depois da normalização; por isso
+  // não dependemos da grafia exata da palavra "não".
+  if (n === 'nao identificado' || n === 'não identificado') return true;
+  if (n.includes('consumidor') && n.includes('identificado')) return true;
+  if (n.includes('cliente') && n.includes('nao identificado')) return true;
+
+  return false;
 }
 
 export function customerFor(sale) {
