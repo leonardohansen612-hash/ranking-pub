@@ -27,6 +27,9 @@ function Ranking() {
   const [updatedAt, setUpdatedAt] = useState(null);
   const [lastSaiposAttemptAt, setLastSaiposAttemptAt] = useState(null);
   const [source, setSource] = useState('');
+  const [lastSaiposSuccessAt, setLastSaiposSuccessAt] = useState(null);
+  const [latestSaleUpdatedAt, setLatestSaleUpdatedAt] = useState(null);
+  const [sourceHealth, setSourceHealth] = useState({});
   const [leaderFlash, setLeaderFlash] = useState(false);
   const lastLeader = useRef(null);
 
@@ -47,6 +50,9 @@ function Ranking() {
       setUpdatedAt(data.updatedAt || null);
       setLastSaiposAttemptAt(data.lastSaiposAttemptAt || null);
       setSource(data.storage?.source || '');
+      setLastSaiposSuccessAt(data.lastSaiposSuccessAt || null);
+      setLatestSaleUpdatedAt(data.latestSaleUpdatedAt || null);
+      setSourceHealth(data.sourceHealth || {});
       setError('');
     } catch (e) {
       console.error(e);
@@ -131,6 +137,8 @@ function Ranking() {
       Atualização automática a cada 60 segundos
       {Number(stats?.beerCups || 0) > 0 ? ` • ${stats.beerCups} copos confirmados hoje` : ''}
       {error ? ' • Última tentativa falhou; mantendo o último ranking confirmado' : ''}
+      {source === 'firestore-fallback' ? ' • Saipos indisponível — usando último ranking confirmado' : ''}
+      {sourceHealth?.degraded ? ' • Saipos parcial — leitura protegida' : ''}
     </footer>
   </Shell>
 }
