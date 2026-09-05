@@ -1,128 +1,82 @@
-import admin from 'firebase-admin';
+import { db, firebaseReady } from './_firebase.js';
 
-function getDb() {
-  if (!admin.apps.length) {
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+function nowIso() {
+  return new Date().toISOString();
+}
 
-    if (!projectId || !clientEmail || !privateKey) {
-      throw new Error('Firebase Admin não configurado no ambiente.');
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert({ projectId, clientEmail, privateKey })
-    });
-  }
-  return admin.firestore();
+function eventId() {
+  return `evt_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function safeHeaders(headers = {}) {
-  const out = {};
-  const blocked = ['authorization', 'cookie', 'set-cookie', 'x-api-key'];
-  for (const [key, value] of Object.entries(headers)) {
-    if (!blocked.includes(String(key).toLowerCase())) out[key] = value;
-  }
-  return out;
+  const blocked = new Set([
+    'authorization', 'cookie', 'set-cookie', 'x-api-key', 'api-key',
+    'proxy-authorization'
+  ]);
+
+  return Object.fromEntries(
+    Object.entries(headers)
+      .filter(([key]) => !blocked.has(String(key).toLowerCase()))
+      .map(([key, value]) => [key, value])
+  );
 }
 
-async function saveEvent(db, data) {
-  const ref = await db.collection('saipos_webhook_events').add(data);
-  return ref.id;
+function bodyFrom(req) {
+  if (req.body === undefined || req.body === null) return null;
+  if (Buffer.isBuffer(req.body)) return req.body.toString('utf8');
+  return req.body;
 }
 
-export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store');
+export async function saiposWebhookPost(req, res) {
+  const id = eventId();
+  const receivedAt = nowIso();
+  const payload = bodyFrom(req);
+
+  const event = {
+    id,
+    receivedAt,
+    method: req.method,
+    path: req.originalUrl || req.url,
+    query: req.query || {},
+    headers: safeHeaders(req.headers || {}),
+    payload
+  };
+
+  // O log é proposital: permite enxergar o payload real no Render sem
+  // alterar o ranking nem depender de nenhuma interpretação prévia.
+  console.log(`[SAIPOS_WEBHOOK] ${JSON.stringify(event)}`);
+
+  let firebaseSaved = false;
+  let firebaseError = null;
 
   try {
-    const db = getDb();
-    const action = String(req.query?.action || '').toLowerCase();
-
-    // GET normal: status do receptor
-    if (req.method === 'GET' && !action) {
-      return res.status(200).json({
-        ok: true,
-        endpoint: 'saipos-webhook',
-        ready: true,
-        tools: {
-          selfTest: '/api/saipos-webhook?action=selftest',
-          recentEvents: '/api/saipos-webhook?action=recent'
-        }
-      });
+    if (firebaseReady()) {
+      await db().collection('saipos_webhook_events').doc(id).set(event, { merge: false });
+      firebaseSaved = true;
     }
-
-    // GET ?action=selftest: simula um evento e grava no Firestore
-    if (req.method === 'GET' && action === 'selftest') {
-      const now = new Date().toISOString();
-      const eventId = await saveEvent(db, {
-        receivedAt: now,
-        source: 'selftest',
-        method: 'GET',
-        body: {
-          type: 'TEX_WEBHOOK_SELF_TEST',
-          message: 'Teste interno Render -> Firestore',
-          createdAt: now
-        }
-      });
-
-      return res.status(200).json({
-        ok: true,
-        selfTest: true,
-        saved: true,
-        eventId,
-        message: 'Auto-teste gravado no Firestore.'
-      });
-    }
-
-    // GET ?action=recent: lista os últimos eventos
-    if (req.method === 'GET' && action === 'recent') {
-      const snap = await db.collection('saipos_webhook_events')
-        .orderBy('receivedAt', 'desc')
-        .limit(20)
-        .get();
-
-      const events = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-
-      return res.status(200).json({
-        ok: true,
-        count: events.length,
-        events
-      });
-    }
-
-    // POST: recebe webhook real
-    if (req.method === 'POST') {
-      const now = new Date().toISOString();
-      const eventId = await saveEvent(db, {
-        receivedAt: now,
-        source: 'saipos',
-        method: req.method,
-        headers: safeHeaders(req.headers),
-        query: req.query || {},
-        body: req.body ?? null
-      });
-
-      console.log('[SAIPOS WEBHOOK]', eventId, JSON.stringify(req.body ?? null));
-
-      return res.status(200).json({
-        ok: true,
-        received: true,
-        eventId
-      });
-    }
-
-    return res.status(405).json({
-      ok: false,
-      error: 'Method not allowed'
-    });
   } catch (error) {
-    console.error('[SAIPOS WEBHOOK ERROR]', error);
-    return res.status(500).json({
-      ok: false,
-      error: error.message
-    });
+    firebaseError = error?.message || String(error);
+    console.error(`[SAIPOS_WEBHOOK_FIREBASE_ERROR] ${firebaseError}`);
   }
+
+  // Webhook deve receber 2xx mesmo se o armazenamento diagnóstico falhar.
+  return res.status(200).json({
+    ok: true,
+    received: true,
+    eventId: id,
+    receivedAt,
+    firebaseSaved,
+    firebaseError
+  });
+}
+
+export function saiposWebhookStatus(_req, res) {
+  return res.status(200).json({
+    ok: true,
+    endpoint: '/api/saipos-webhook',
+    accepts: 'POST',
+    purpose: 'captura diagnostica de eventos Saipos',
+    firebaseConfigured: firebaseReady(),
+    timestamp: nowIso()
+  });
 }
