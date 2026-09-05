@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import rankingHandler from './api/ranking.js';
+import saiposDiagnosticoHandler from './api/saipos-diagnostico.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,6 +16,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // API do Ranking do Copo
 app.get('/api/ranking', rankingHandler);
+
+// Diagnóstico temporário da Saipos — somente leitura, não altera ranking/Firebase.
+app.get('/api/saipos-diagnostico', saiposDiagnosticoHandler);
 
 // Healthcheck
 app.get('/health', (_req, res) => {
