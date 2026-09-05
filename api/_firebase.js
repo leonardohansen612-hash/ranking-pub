@@ -135,71 +135,45 @@ export async function saveDailySnapshotMonotonic(date, fresh) {
   const firestore = db();
   const ref = firestore.collection('ranking_daily').doc(date);
   const nowIso = new Date().toISOString();
-  const SNAPSHOT_VERSION = 3;
 
   return firestore.runTransaction(async tx => {
     const snap = await tx.get(ref);
     const previous = snap.exists ? snap.data() : null;
+    const ranking = mergeMonotonic(previous, fresh);
 
-    const previousRanking = normalizeRanking(previous?.ranking || []);
-    const freshRanking = normalizeRanking(fresh?.ranking || []);
-
-    const previousCups = previousRanking.reduce((sum, p) => sum + num(p.cups), 0);
-    const freshCups = freshRanking.reduce((sum, p) => sum + num(p.cups), 0);
-
-    // V2: o ranking novo substitui o snapshot agregado antigo.
-    // Isto é necessário porque o merge por pessoa preservava para sempre entradas
-    // antigas como "Consumidor não identificado", mesmo depois de a Saipos passar
-    // a devolver o nome correto da mesma venda.
-    //
-    // Depois da migração para V2, mantemos a proteção contra uma leitura parcial:
-    // se uma atualização vier com menos copos que o último snapshot válido, o
-    // snapshot anterior continua sendo exibido.
-    const previousVersion = num(previous?.snapshotVersion);
-    const isMigration = !previous || previousVersion < SNAPSHOT_VERSION;
-    const acceptFresh = isMigration || freshCups >= previousCups;
-
-    const ranking = acceptFresh ? freshRanking : previousRanking;
-    const changed = rankingSignature(previousRanking) !== rankingSignature(ranking);
+    const changed = rankingSignature(previous?.ranking || []) !== rankingSignature(ranking);
 
     const meta = periodMeta(date);
-    const freshStats = fresh?.stats || {};
-    const previousStats = previous?.stats || {};
-    const chosenStats = acceptFresh ? freshStats : previousStats;
-
     const doc = {
       date,
       ...meta,
       status: 'snapshot',
-      snapshotVersion: SNAPSHOT_VERSION,
       ranking,
       stats: {
-        sales: num(chosenStats.sales),
-        saleGroups: num(chosenStats.saleGroups),
-        matchedItems: num(chosenStats.matchedItems),
-        beerCups: num(chosenStats.beerCups || (acceptFresh ? freshCups : previousCups)),
-        unmatchedGroups: num(chosenStats.unmatchedGroups),
-        unmatchedBeerCups: num(chosenStats.unmatchedBeerCups),
-        unidentifiedBeerCups: num(chosenStats.unidentifiedBeerCups),
-        unidentifiedSales: num(chosenStats.unidentifiedSales),
+        sales: Math.max(num(previous?.stats?.sales), num(fresh?.stats?.sales)),
+        saleGroups: Math.max(num(previous?.stats?.saleGroups), num(fresh?.stats?.saleGroups)),
+        matchedItems: Math.max(num(previous?.stats?.matchedItems), num(fresh?.stats?.matchedItems)),
+        beerCups: Math.max(num(previous?.stats?.beerCups), num(fresh?.stats?.beerCups)),
         days: 1
       },
-      warnings: acceptFresh ? (fresh?.warnings || []) : (previous?.warnings || []),
-      source: acceptFresh ? 'saipos-snapshot-v2' : 'saipos-protected-v2',
+      warnings: fresh?.warnings || [],
+      source: 'saipos-monotonic',
+      sourceHealth: fresh?.fetchMeta || {},
+      latestSaleUpdatedAt: fresh?.fetchMeta?.latestSaleUpdatedAt || previous?.latestSaleUpdatedAt || null,
+      // updatedAt representa mudança REAL no ranking.
       updatedAt: changed
         ? nowIso
         : (previous?.updatedAt || nowIso),
       lastSaiposAttemptAt: nowIso,
-      lastSaiposSuccessAt: nowIso
+      lastSaiposSuccessAt: nowIso,
+      lastSaiposError: null
     };
 
     tx.set(ref, doc, { merge:false });
 
     return {
       ...doc,
-      changed,
-      acceptedFresh: acceptFresh,
-      migration: isMigration
+      changed
     };
   });
 }

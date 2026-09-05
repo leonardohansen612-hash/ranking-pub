@@ -10,8 +10,8 @@ import {
 } from './_saipos.js';
 
 export async function fetchAndAggregateDate(date) {
-  const {sales,itemGroups,warnings} = await fetchDay(date);
-  return aggregate({date,sales,itemGroups,warnings});
+  const {sales,itemGroups,warnings,fetchMeta} = await fetchDay(date);
+  return aggregate({date,sales,itemGroups,warnings,fetchMeta});
 }
 
 function aggregate(day) {
@@ -88,73 +88,8 @@ function aggregate(day) {
       unmatchedBeerCups,
       days:1
     },
-    warnings:day.warnings || []
-  };
-}
-
-export async function fetchDebugDate(date) {
-  const {sales,itemGroups,warnings} = await fetchDay(date);
-  const saleMap = new Map(
-    sales.filter(s => !saleCanceled(s))
-      .map(s => [getSaleId(s), s])
-      .filter(([id]) => id)
-  );
-
-  const salesDebug = sales.map(s => ({
-    id_sale: getSaleId(s),
-    id_sale_type: s?.id_sale_type ?? null,
-    desc_sale: s?.desc_sale ?? null,
-    customer_name: s?.customer?.name ?? s?.customer_name ?? s?.name_customer ?? s?.desc_customer ?? null,
-    customer_id: s?.customer?.id_customer ?? s?.id_customer ?? null,
-    card: s?.table_order?.id_store_order_card ?? null,
-    table: s?.table_order?.id_store_table ?? null,
-    ticket: s?.ticket?.number ?? null,
-    resolved_customer: customerFor(s),
-    canceled: saleCanceled(s)
-  }));
-
-  const groupsDebug = itemGroups.map((g, index) => {
-    const id = getSaleId(g);
-    const sale = saleMap.get(id);
-    const items = Array.isArray(g?.items) ? g.items : [];
-    return {
-      index,
-      id_sale: id,
-      matched_sale: Boolean(sale),
-      resolved_customer: sale ? customerFor(sale) : null,
-      items_count: items.length,
-      items: items.map(it => ({
-        name: getItemName(it),
-        qty: getQty(it),
-        canceled: itemCanceled(it),
-        isBeer: isBeer(getItemName(it)),
-        raw_name_fields: {
-          desc_sale_item: it?.desc_sale_item ?? null,
-          desc_store_item: it?.desc_store_item ?? null,
-          desc_item: it?.desc_item ?? null,
-          item_name: it?.item_name ?? null,
-          product_name: it?.product_name ?? null,
-          name: it?.name ?? null
-        },
-        raw_qty_fields: {
-          quantity: it?.quantity ?? null,
-          qty: it?.qty ?? null,
-          count: it?.count ?? null,
-          quantity_item: it?.quantity_item ?? null,
-          item_quantity: it?.item_quantity ?? null,
-          amount: it?.amount ?? null
-        }
-      }))
-    };
-  });
-
-  return {
-    date,
-    warnings,
-    sales_count: sales.length,
-    groups_count: itemGroups.length,
-    sales: salesDebug,
-    groups: groupsDebug
+    warnings:day.warnings || [],
+    fetchMeta:day.fetchMeta || {}
   };
 }
 

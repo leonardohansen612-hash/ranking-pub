@@ -1,4 +1,4 @@
-import { fetchAndAggregateDate, fetchDebugDate, saoPauloToday } from './_ranking-core.js';
+import { fetchAndAggregateDate, saoPauloToday } from './_ranking-core.js';
 import {
   firebaseReady,
   saveDailySnapshotMonotonic,
@@ -21,6 +21,8 @@ function responseFromSnapshot(snapshot, extraStorage = {}) {
     updatedAt: snapshot?.updatedAt || null,
     lastSaiposAttemptAt: snapshot?.lastSaiposAttemptAt || null,
     lastSaiposSuccessAt: snapshot?.lastSaiposSuccessAt || null,
+    latestSaleUpdatedAt: snapshot?.latestSaleUpdatedAt || null,
+    sourceHealth: snapshot?.sourceHealth || {},
     ranking: snapshot?.ranking || [],
     stats: snapshot?.stats || {},
     warnings: snapshot?.warnings || [],
@@ -52,16 +54,6 @@ export default async function handler(req, res) {
 
   const today = saoPauloToday();
 
-  // Diagnóstico temporário e somente leitura. Não grava nem altera o snapshot.
-  if (String(req.query.debug || '') === '1') {
-    try {
-      const debug = await fetchDebugDate(today);
-      return res.status(200).json({ ok:true, period:'today', debug:true, ...debug });
-    } catch (e) {
-      return res.status(500).json({ ok:false, period:'today', debug:true, date:today, error:e.message });
-    }
-  }
-
   try {
     if (!firebaseReady()) {
       const fresh = await fetchAndAggregateDate(today);
@@ -73,6 +65,8 @@ export default async function handler(req, res) {
         updatedAt: new Date().toISOString(),
         lastSaiposAttemptAt: new Date().toISOString(),
         lastSaiposSuccessAt: new Date().toISOString(),
+        latestSaleUpdatedAt: fresh?.fetchMeta?.latestSaleUpdatedAt || null,
+        sourceHealth: fresh?.fetchMeta || {},
         ranking: fresh.ranking,
         stats: fresh.stats,
         warnings: fresh.warnings || [],
@@ -145,6 +139,8 @@ export default async function handler(req, res) {
       updatedAt: saved.updatedAt || null,
       lastSaiposAttemptAt: saved.lastSaiposAttemptAt || null,
       lastSaiposSuccessAt: saved.lastSaiposSuccessAt || null,
+      latestSaleUpdatedAt: saved.latestSaleUpdatedAt || null,
+      sourceHealth: saved.sourceHealth || fresh?.fetchMeta || {},
       ranking: saved.ranking || [],
       stats: saved.stats || {},
       warnings: fresh?.warnings || saved.warnings || [],

@@ -144,60 +144,92 @@ function mergeGroups(...lists) {
 }
 
 export async function fetchDay(date) {
-  // Estratégia V5 para operação AO VIVO:
-  // 1) shift_date continua sendo a fonte oficial do turno.
-  // 2) updated_at funciona como "rede de captura" para comandas abertas/alteradas
-  //    que ainda não apareceram no recorte por shift_date.
-  // 3) tudo é deduplicado por id_sale e filtrado novamente para o turno desejado.
-  //
-  // A janela de updated_at vai até o meio-dia seguinte para manter o turno noturno
-  // funcionando após 00:00. Resultados de outro turno são descartados abaixo.
+  // V6: leitura redundante e tolerante a falhas.
+  // Consultamos o mesmo dia por shift_date, created_at e updated_at.
+  // Cada fonte é independente: um 504 em um filtro não derruba as demais.
   const shiftStart = `${date} 00:00:00`;
   const shiftEnd   = `${date} 23:59:59`;
   const nextDate   = addDays(date, 1);
-  const updateStart = `${date} 00:00:00`;
-  const updateEnd   = `${nextDate} 12:00:00`;
+  const updateEnd  = `${nextDate} 12:00:00`;
 
-  // Sequencial de propósito: já observamos 504/PGRST003 quando pressionamos
-  // o pool da Saipos com chamadas paralelas.
-  const shiftSales = await fetchAllByFilter('/search_sales','shift_date',shiftStart,shiftEnd);
-  const updatedSalesRaw = await fetchAllByFilter('/search_sales','updated_at',updateStart,updateEnd);
+  const warnings = [];
+  const sourceStatus = {};
 
-  // Só aceitamos vendas do turno solicitado quando shift_date está disponível.
-  // Se uma venda recém-aberta ainda vier sem shift_date, aceitamos somente quando
-  // foi criada na data operacional pedida.
-  const updatedSales = updatedSalesRaw.filter(s => {
+  async function safe(path, column, startValue, endValue) {
+    const key = `${path}:${column}`;
+    try {
+      const rows = await fetchAllByFilter(path, column, startValue, endValue);
+      sourceStatus[key] = { ok:true, count:rows.length };
+      return rows;
+    } catch (e) {
+      sourceStatus[key] = { ok:false, count:0, error:e.message };
+      warnings.push(`${key} falhou: ${e.message}`);
+      return [];
+    }
+  }
+
+  // Sequencial de propósito: a Saipos já apresentou PGRST003/504 sob concorrência.
+  const shiftSales   = await safe('/search_sales','shift_date', shiftStart, shiftEnd);
+  const createdSales = await safe('/search_sales','created_at', shiftStart, shiftEnd);
+  const updatedSalesRaw = await safe('/search_sales','updated_at', shiftStart, updateEnd);
+
+  const belongsToDay = s => {
     const sd = rowShiftDate(s);
     if (sd) return sd === date;
     return dateOnly(s?.created_at) === date;
-  });
+  };
 
-  const sales = mergeSales(shiftSales, updatedSales);
+  const sales = mergeSales(
+    shiftSales.filter(belongsToDay),
+    createdSales.filter(belongsToDay),
+    updatedSalesRaw.filter(belongsToDay)
+  );
   const validSaleIds = new Set(sales.map(getSaleId).filter(Boolean));
 
-  const shiftGroups = await fetchAllByFilter('/sales_items','shift_date',shiftStart,shiftEnd);
-  const updatedGroupsRaw = await fetchAllByFilter('/sales_items','updated_at',updateStart,updateEnd);
+  const shiftGroups   = await safe('/sales_items','shift_date', shiftStart, shiftEnd);
+  const createdGroups = await safe('/sales_items','created_at', shiftStart, shiftEnd);
+  const updatedGroupsRaw = await safe('/sales_items','updated_at', shiftStart, updateEnd);
 
-  // Para itens, o id_sale da lista final de vendas é a autoridade. Isso evita
-  // trazer item de venda antiga apenas porque ela foi editada hoje.
-  const updatedGroups = updatedGroupsRaw.filter(g => validSaleIds.has(getSaleId(g)));
-  const itemGroups = mergeGroups(shiftGroups, updatedGroups)
-    .filter(g => {
-      const id = getSaleId(g);
-      return !id || validSaleIds.has(id);
-    });
+  // id_sale da união de vendas é a autoridade para não trazer itens de outro turno.
+  const keepGroup = g => {
+    const id = getSaleId(g);
+    return !id || validSaleIds.has(id);
+  };
+
+  const itemGroups = mergeGroups(
+    shiftGroups.filter(keepGroup),
+    createdGroups.filter(keepGroup),
+    updatedGroupsRaw.filter(keepGroup)
+  ).filter(keepGroup);
+
+  const successfulSources = Object.values(sourceStatus).filter(x => x.ok).length;
+  if (successfulSources === 0) {
+    throw new Error('Todas as consultas da Data API Saipos falharam.');
+  }
+
+  const timestamps = sales
+    .map(s => String(s?.updated_at || s?.created_at || '').trim())
+    .filter(Boolean)
+    .sort();
 
   return {
     sales,
     itemGroups,
-    warnings:[],
+    warnings,
     fetchMeta:{
-      shiftSales: shiftSales.length,
-      updatedSales: updatedSales.length,
-      mergedSales: sales.length,
-      shiftGroups: shiftGroups.length,
-      updatedGroups: updatedGroups.length,
-      mergedGroups: itemGroups.length
+      sourceStatus,
+      successfulSources,
+      totalSources:Object.keys(sourceStatus).length,
+      degraded:successfulSources < Object.keys(sourceStatus).length,
+      shiftSales:shiftSales.length,
+      createdSales:createdSales.length,
+      updatedSales:updatedSalesRaw.length,
+      mergedSales:sales.length,
+      shiftGroups:shiftGroups.length,
+      createdGroups:createdGroups.length,
+      updatedGroups:updatedGroupsRaw.length,
+      mergedGroups:itemGroups.length,
+      latestSaleUpdatedAt:timestamps.length ? timestamps[timestamps.length-1] : null
     }
   };
 }
