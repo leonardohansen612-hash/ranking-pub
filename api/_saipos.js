@@ -58,17 +58,19 @@ function unwrapList(json) {
   return [];
 }
 
-async function fetchAll(path, date) {
-  // A documentação da Saipos define estes filtros como date-time. Mantemos o
-  // turno (shift_date) e o formato com espaço usado nos exemplos oficiais.
-  const start = `${date} 00:00:00`;
-  const end   = `${date} 23:59:59`;
+function addDays(date, days) {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0,10);
+}
+
+async function fetchAllByFilter(path, column, start, end) {
   const out=[];
   const limit=1000;
 
   for (let offset=0; offset<10000; offset+=limit) {
     const json = await requestJson(path, {
-      p_date_column_filter:'shift_date',
+      p_date_column_filter:column,
       p_filter_date_start:start,
       p_filter_date_end:end,
       p_limit:limit,
@@ -81,11 +83,123 @@ async function fetchAll(path, date) {
   return out;
 }
 
+function dateOnly(value) {
+  const s = String(value ?? '').trim();
+  const m = s.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+  return m ? m[1] : null;
+}
+
+function rowShiftDate(row) {
+  return dateOnly(
+    row?.shift_date ??
+    row?.sale?.shift_date ??
+    row?.store_shift?.shift_date ??
+    row?.date_shift
+  );
+}
+
+function itemRichness(group) {
+  const items = Array.isArray(group?.items) ? group.items : [];
+  let qty = 0;
+  for (const item of items) {
+    const n = Number(item?.quantity ?? item?.qty ?? item?.count ?? 0);
+    if (Number.isFinite(n) && n > 0) qty += n;
+  }
+  return items.length * 10000 + qty;
+}
+
+function mergeSales(...lists) {
+  const map = new Map();
+  for (const rows of lists) {
+    for (const row of rows || []) {
+      const id = getSaleId(row);
+      if (!id) continue;
+      const old = map.get(id);
+      // updated_at tende a carregar a versão mais atual da venda.
+      const oldTs = Date.parse(old?.updated_at || old?.created_at || '') || 0;
+      const newTs = Date.parse(row?.updated_at || row?.created_at || '') || 0;
+      if (!old || newTs >= oldTs) map.set(id, row);
+    }
+  }
+  return [...map.values()];
+}
+
+function mergeGroups(...lists) {
+  const map = new Map();
+  let orphan = 0;
+  for (const rows of lists) {
+    for (const row of rows || []) {
+      const id = getSaleId(row);
+      if (!id) {
+        map.set(`__orphan_${orphan++}`, row);
+        continue;
+      }
+      const old = map.get(id);
+      // O mesmo id_sale pode vir nos dois filtros. Nunca somamos os dois:
+      // ficamos com a versão que contém mais itens/quantidades.
+      if (!old || itemRichness(row) >= itemRichness(old)) map.set(id, row);
+    }
+  }
+  return [...map.values()];
+}
+
 export async function fetchDay(date) {
-  // Sequencial para reduzir os 504/PGRST003 observados na Saipos.
-  const sales = await fetchAll('/search_sales', date);
-  const itemGroups = await fetchAll('/sales_items', date);
-  return { sales, itemGroups, warnings:[] };
+  // Estratégia V5 para operação AO VIVO:
+  // 1) shift_date continua sendo a fonte oficial do turno.
+  // 2) updated_at funciona como "rede de captura" para comandas abertas/alteradas
+  //    que ainda não apareceram no recorte por shift_date.
+  // 3) tudo é deduplicado por id_sale e filtrado novamente para o turno desejado.
+  //
+  // A janela de updated_at vai até o meio-dia seguinte para manter o turno noturno
+  // funcionando após 00:00. Resultados de outro turno são descartados abaixo.
+  const shiftStart = `${date} 00:00:00`;
+  const shiftEnd   = `${date} 23:59:59`;
+  const nextDate   = addDays(date, 1);
+  const updateStart = `${date} 00:00:00`;
+  const updateEnd   = `${nextDate} 12:00:00`;
+
+  // Sequencial de propósito: já observamos 504/PGRST003 quando pressionamos
+  // o pool da Saipos com chamadas paralelas.
+  const shiftSales = await fetchAllByFilter('/search_sales','shift_date',shiftStart,shiftEnd);
+  const updatedSalesRaw = await fetchAllByFilter('/search_sales','updated_at',updateStart,updateEnd);
+
+  // Só aceitamos vendas do turno solicitado quando shift_date está disponível.
+  // Se uma venda recém-aberta ainda vier sem shift_date, aceitamos somente quando
+  // foi criada na data operacional pedida.
+  const updatedSales = updatedSalesRaw.filter(s => {
+    const sd = rowShiftDate(s);
+    if (sd) return sd === date;
+    return dateOnly(s?.created_at) === date;
+  });
+
+  const sales = mergeSales(shiftSales, updatedSales);
+  const validSaleIds = new Set(sales.map(getSaleId).filter(Boolean));
+
+  const shiftGroups = await fetchAllByFilter('/sales_items','shift_date',shiftStart,shiftEnd);
+  const updatedGroupsRaw = await fetchAllByFilter('/sales_items','updated_at',updateStart,updateEnd);
+
+  // Para itens, o id_sale da lista final de vendas é a autoridade. Isso evita
+  // trazer item de venda antiga apenas porque ela foi editada hoje.
+  const updatedGroups = updatedGroupsRaw.filter(g => validSaleIds.has(getSaleId(g)));
+  const itemGroups = mergeGroups(shiftGroups, updatedGroups)
+    .filter(g => {
+      const id = getSaleId(g);
+      return !id || validSaleIds.has(id);
+    });
+
+  return {
+    sales,
+    itemGroups,
+    warnings:[],
+    fetchMeta:{
+      shiftSales: shiftSales.length,
+      updatedSales: updatedSales.length,
+      mergedSales: sales.length,
+      shiftGroups: shiftGroups.length,
+      updatedGroups: updatedGroups.length,
+      mergedGroups: itemGroups.length
+    }
+  };
 }
 
 function first(obj, paths) {
