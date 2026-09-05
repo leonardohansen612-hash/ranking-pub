@@ -7,13 +7,15 @@ function authHeaders(token, mode='raw') {
   };
 }
 
-export async function saiposFetch(path, params={}) {
+async function requestJson(path, params) {
   const token = process.env.SAIPOS_API_TOKEN;
-  if (!token) throw new Error('SAIPOS_API_TOKEN não configurado na Vercel.');
+  if (!token) throw new Error('SAIPOS_API_TOKEN não configurado.');
 
   const url = new URL(BASE + path);
-  for (const [k,v] of Object.entries(params)) {
-    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+  for (const [k,v] of Object.entries(params || {})) {
+    if (v !== undefined && v !== null && v !== '') {
+      url.searchParams.set(k, String(v));
+    }
   }
 
   const mode = process.env.SAIPOS_AUTH_MODE || 'raw';
@@ -24,174 +26,182 @@ export async function saiposFetch(path, params={}) {
   }
 
   const text = await r.text();
-  let body;
-  try { body = JSON.parse(text); } catch { body = text; }
 
   if (!r.ok) {
-    throw new Error(
-      `Saipos ${r.status}: ${
-        typeof body === 'string' ? body.slice(0,500) : JSON.stringify(body).slice(0,500)
-      }`
-    );
+    const err = new Error(`Saipos ${path} respondeu HTTP ${r.status}`);
+    err.status = r.status;
+    err.detail = text.slice(0, 500);
+    throw err;
   }
-  return body;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Saipos ${path} respondeu conteúdo inválido.`);
+  }
 }
 
-export function rows(body) {
-  if (Array.isArray(body)) return body;
-  for (const key of ['data','items','results','records','result']) {
-    if (Array.isArray(body?.[key])) return body[key];
+function unwrapList(json) {
+  if (Array.isArray(json)) return json;
+  if (!json || typeof json !== 'object') return [];
+
+  const preferred = [
+    'data','results','result','records','rows',
+    'sales','sale_items','sales_items'
+  ];
+
+  for (const key of preferred) {
+    if (Array.isArray(json[key])) return json[key];
   }
+
+  // Alguns endpoints devolvem um envelope com uma única chave contendo o array.
+  for (const value of Object.values(json)) {
+    if (Array.isArray(value)) return value;
+  }
+
   return [];
 }
 
-function pad(n){ return String(n).padStart(2,'0'); }
+async function fetchAll(path, date) {
+  const start = `${date}T00:00:00`;
+  const end   = `${date}T23:59:59`;
 
-export function dateHourRange(date, hour) {
-  const hh = pad(hour);
-  return [`${date} ${hh}:00:00`, `${date} ${hh}:59:59`];
-}
-
-export async function fetchHour(path, date, hour) {
   const out = [];
-  let offset = 0;
-  const limit = Number(process.env.SAIPOS_PAGE_LIMIT || 250);
+  const limit = 1000;
 
-  for (let page=0; page<20; page++) {
-    const [start,end] = dateHourRange(date, hour);
-    const body = await saiposFetch(path, {
-      p_date_column_filter: 'created_at',
+  for (let offset=0; offset<10000; offset += limit) {
+    const json = await requestJson(path, {
+      p_date_column_filter: 'shift_date',
       p_filter_date_start: start,
       p_filter_date_end: end,
       p_limit: limit,
       p_offset: offset
     });
 
-    const batch = rows(body);
-    out.push(...batch);
-    if (batch.length < limit) break;
-    offset += limit;
+    const rows = unwrapList(json);
+    out.push(...rows);
+
+    if (rows.length < limit) break;
   }
+
   return out;
 }
 
-export function getSaleId(o) {
-  return String(o?.id_sale ?? o?.sale?.id_sale ?? o?.sale_id ?? '');
+export async function fetchDay(date) {
+  // Consulta independente: uma falha não apaga silenciosamente o resultado da outra.
+  const [salesResult, itemsResult] = await Promise.allSettled([
+    fetchAll('/search_sales', date),
+    fetchAll('/sales_items', date)
+  ]);
+
+  const warnings = [];
+
+  const sales = salesResult.status === 'fulfilled' ? salesResult.value : [];
+  const itemGroups = itemsResult.status === 'fulfilled' ? itemsResult.value : [];
+
+  if (salesResult.status === 'rejected') {
+    warnings.push(`search_sales: ${salesResult.reason?.message || 'falha'}`);
+  }
+  if (itemsResult.status === 'rejected') {
+    warnings.push(`sales_items: ${itemsResult.reason?.message || 'falha'}`);
+  }
+
+  // Se um dos dois endpoints falhar, não fingimos que foi atualização válida.
+  if (salesResult.status === 'rejected' || itemsResult.status === 'rejected') {
+    const e = new Error(warnings.join(' | '));
+    e.partial = { sales, itemGroups, warnings };
+    throw e;
+  }
+
+  return { sales, itemGroups, warnings };
 }
 
-export function saleCanceled(o) {
-  return ['Y','S',true,1,'1'].includes(
-    o?.canceled ?? o?.cancelled ?? o?.is_canceled ?? o?.is_cancelled
-  );
+export function getSaleId(obj) {
+  const raw =
+    obj?.id_sale ??
+    obj?.sale_id ??
+    obj?.idSale ??
+    obj?.sale?.id_sale ??
+    obj?.sale?.id;
+
+  return raw === undefined || raw === null ? null : String(raw);
 }
 
-export function itemCanceled(o) {
-  return ['Y','S',true,1,'1'].includes(
-    o?.deleted ?? o?.canceled ?? o?.cancelled ?? o?.is_canceled ?? o?.is_cancelled
-  );
+export function saleCanceled(sale) {
+  const v = sale?.canceled ?? sale?.cancelled ?? sale?.deleted;
+  return v === true || v === 1 || String(v || '').toUpperCase() === 'Y';
 }
 
-export function getItemName(o) {
+export function itemCanceled(item) {
+  const v = item?.canceled ?? item?.cancelled ?? item?.deleted;
+  return v === true || v === 1 || String(v || '').toUpperCase() === 'Y';
+}
+
+export function getItemName(item) {
   return String(
-    o?.desc_sale_item ??
-    o?.desc_store_item ??
-    o?.desc_item ??
-    o?.item_name ??
-    o?.name ??
-    o?.product_name ??
+    item?.desc_sale_item ??
+    item?.desc_store_item ??
+    item?.item_name ??
+    item?.sale_item_name ??
+    item?.product_name ??
+    item?.description ??
+    item?.name ??
     ''
   ).trim();
 }
 
-export function getQty(o) {
-  const q = Number(o?.quantity ?? o?.qty ?? o?.count ?? o?.amount ?? 1);
-  return Number.isFinite(q) ? q : 0;
+export function getQty(item) {
+  const n = Number(
+    item?.quantity ??
+    item?.qty ??
+    item?.amount ??
+    item?.item_quantity ??
+    0
+  );
+  return Number.isFinite(n) ? n : 0;
 }
 
-function cleanName(s) {
-  return String(s || '').replace(/\s+/g,' ').trim();
+function normalizeName(name) {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .trim()
+    .replace(/\s+/g,' ');
 }
 
 export function customerFor(sale) {
-  // No uso real do Tex, desc_sale é o nome/comanda do cliente.
-  const desc = cleanName(sale?.desc_sale);
-  if (desc) return { key:`d:${desc.toLowerCase()}`, name:desc };
+  const customerName =
+    sale?.customer?.name ??
+    sale?.customer_name ??
+    sale?.name_customer ??
+    sale?.desc_customer ??
+    sale?.desc_sale ??
+    sale?.ticket?.number ??
+    sale?.table_order?.id_store_order_card ??
+    'Consumidor não identificado';
 
-  const c = sale?.customer || {};
-  const cname = cleanName(c.name);
-  const normalized = cname.toLowerCase();
-
-  if (cname &&
-      !normalized.includes('consumidor') &&
-      !normalized.includes('identificado')) {
-    return {
-      key: c.id_customer ? `c:${c.id_customer}` : `n:${normalized}`,
-      name: cname
-    };
-  }
-
-  const card = sale?.table_order?.id_store_order_card;
-  const table = sale?.table_order?.id_store_table;
-  if (card) return { key:`card:${card}`, name:`Comanda ${card}` };
-  if (table) return { key:`table:${table}`, name:`Mesa ${table}` };
-
-  return { key:`sale:${sale?.id_sale}`, name:'Não identificado' };
+  const name = normalizeName(customerName) || 'Consumidor não identificado';
+  return {
+    key: `d:${name.toLowerCase()}`,
+    name
+  };
 }
 
-const DEFAULT_KEYWORDS = [
+const BEERS = [
   'pilsen',
+  'bitterzinha',
   'hoplager',
   'witbier',
-  'bitterzinha',
-  'ybá',
   'yba',
+  'ybá',
   'ipa zero',
   'american ipa',
   'textreme',
   'english porter',
-  'maria manuela',
-  'maria manoela',
-  'milkshake neipa',
-  'session ipa',
-  'sunrise',
-  'winner blond',
-  'pilsen caju'
+  'maria manuela'
 ];
 
 export function isBeer(name) {
-  const custom = (process.env.BEER_KEYWORDS || '')
-    .split(',')
-    .map(x=>x.trim().toLowerCase())
-    .filter(Boolean);
-
-  const keywords = custom.length ? custom : DEFAULT_KEYWORDS;
-  const n = String(name || '').toLowerCase();
-  return keywords.some(k => n.includes(k));
-}
-
-export function hourWindow() {
-  const start = Math.max(0, Math.min(23, Number(process.env.SAIPOS_START_HOUR ?? 14)));
-  const end = Math.max(start, Math.min(23, Number(process.env.SAIPOS_END_HOUR ?? 23)));
-  return {start,end};
-}
-
-export function saoPauloToday() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone:'America/Sao_Paulo',
-    year:'numeric',
-    month:'2-digit',
-    day:'2-digit'
-  }).formatToParts(new Date());
-
-  const obj = Object.fromEntries(parts.map(p=>[p.type,p.value]));
-  return `${obj.year}-${obj.month}-${obj.day}`;
-}
-
-export function monthDatesThrough(dateStr) {
-  const [y,m,d] = dateStr.split('-').map(Number);
-  const out=[];
-  for(let day=1; day<=d; day++) {
-    out.push(`${y}-${pad(m)}-${pad(day)}`);
-  }
-  return out;
+  const n = normalizeName(name).toLowerCase();
+  return BEERS.some(b => n.includes(normalizeName(b).toLowerCase()));
 }
