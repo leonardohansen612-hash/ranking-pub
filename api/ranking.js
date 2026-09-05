@@ -1,4 +1,4 @@
-import { fetchAndAggregateDate, saoPauloToday } from './_ranking-core.js';
+import { fetchAndAggregateDate, fetchDebugDate, saoPauloToday } from './_ranking-core.js';
 import {
   firebaseReady,
   saveDailySnapshotMonotonic,
@@ -51,6 +51,16 @@ export default async function handler(req, res) {
   }
 
   const today = saoPauloToday();
+
+  // Diagnóstico temporário e somente leitura. Não grava nem altera o snapshot.
+  if (String(req.query.debug || '') === '1') {
+    try {
+      const debug = await fetchDebugDate(today);
+      return res.status(200).json({ ok:true, period:'today', debug:true, ...debug });
+    } catch (e) {
+      return res.status(500).json({ ok:false, period:'today', debug:true, date:today, error:e.message });
+    }
+  }
 
   try {
     if (!firebaseReady()) {
