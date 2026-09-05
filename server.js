@@ -5,6 +5,7 @@ import rankingHandler from './api/ranking.js';
 import saiposDiagnosticoHandler from './api/saipos-diagnostico.js';
 import saiposCatalogoHml from './api/saipos-catalogo-hml.js';
 import saiposAuthDiagnostico from './api/saipos-auth-diagnostico.js';
+import saiposIpDiagnostico from './api/saipos-ip-diagnostico.js';
 import { saiposWebhookPost, saiposWebhookStatus } from './api/saipos-webhook.js';
 
 const app = express();
@@ -17,31 +18,19 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Webhook Saipos: captura diagnostica em tempo real.
 app.post('/api/saipos-webhook', saiposWebhookPost);
 app.get('/api/saipos-webhook', saiposWebhookStatus);
-
-// API do Ranking do Copo
 app.get('/api/ranking', rankingHandler);
-
-// Diagnóstico temporário da Data API Saipos
 app.get('/api/saipos-diagnostico', saiposDiagnosticoHandler);
-
-// Catálogo da loja HML da API de Pedidos (somente leitura)
 app.get('/api/saipos-catalogo-hml', saiposCatalogoHml);
-
-// Diagnóstico isolado da autenticação da Order API
 app.get('/api/saipos-auth-diagnostico', saiposAuthDiagnostico);
+app.get('/api/saipos-ip-diagnostico', saiposIpDiagnostico);
 
-// Healthcheck
 app.get('/health', (_req, res) => {
   res.status(200).json({ ok: true, service: 'ranking-pub' });
 });
 
-// Front-end estático
 app.use(express.static(__dirname));
-
-// Fallback do front-end — precisa vir DEPOIS das rotas /api
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
